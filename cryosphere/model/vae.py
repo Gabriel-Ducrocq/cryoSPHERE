@@ -75,7 +75,7 @@ class VAE(torch.nn.Module):
             r6_rotation_per_segments[part] = r6_rotation_per_segments_all_parts[:, start:(start+n_segments)]
             start += n_segments
 
-        return quaternions_per_segments, translations_per_segments
+        return r6_rotation_per_segments, translations_per_segments
 
 
 
