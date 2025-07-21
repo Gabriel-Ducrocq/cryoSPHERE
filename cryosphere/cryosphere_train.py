@@ -33,9 +33,48 @@ def train(rank, world_size, yaml_setting_path):
     ddp_setup(rank, world_size)
     (vae, image_translator, ctf, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings, device, scheduler, 
     base_structure, lp_mask2d, mask_images, amortized, path_results, structural_loss_parameters, segmenter) = model.utils.parse_yaml(yaml_setting_path, rank)
+    pre_training(vae, image_translator, ctf, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings, scheduler, 
+    base_structure, lp_mask2d, mask_images, amortized, path_results, structural_loss_parameters, segmenter, rank)
     start_training(vae, image_translator, ctf, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings, scheduler, 
     base_structure, lp_mask2d, mask_images, amortized, path_results, structural_loss_parameters, segmenter, rank)
     destroy_process_group()
+
+def pre_training(vae, image_translator, ctf, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings, scheduler, 
+    base_structure, lp_mask2d, mask_images, amortized, path_results, structural_loss_parameters, segmenter, gpu_id):
+    vae = DDP(vae, device_ids=[gpu_id])
+    segmenter = DDP(segmenter, device_ids=[gpu_id])
+    target_pretrain = torch.zeros(1, 1, 9, dtype=torch.float32, device=device)
+    target_pretrain[0, 0, 3] = 1
+    target_pretrain[0, 0, 6] = 1
+
+    for epoch in range(10):
+        data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers = experiment_settings["num_workers"], drop_last=True, sampler=DistributedSampler(dataset, drop_last=True))
+        start_tot = time()
+        data_loader.sampler.set_epoch(epoch) 
+        data_loader = tqdm(iter(data_loader))
+        all_losses = []
+        for batch_num, (indexes, batch_images, batch_poses, batch_poses_translation, _) in enumerate(data_loader):
+            batch_images = batch_images.to(gpu_id)
+            batch_poses = batch_poses.to(gpu_id)
+            batch_poses_translation = batch_poses_translation.to(gpu_id)
+            indexes = indexes.to(gpu_id)
+            flattened_batch_images = batch_images.flatten(start_dim=-2)
+            batch_translated_images = image_translator.transform(batch_images, batch_poses_translation[:, None, :])
+            lp_batch_translated_images = low_pass_images(batch_translated_images, lp_mask2d)
+            if amortized:
+                latent_variables, latent_mean, latent_std = vae.module.sample_latent(flattened_batch_images)
+            else:
+                latent_variables, latent_mean, latent_std = vae.module.sample_latent(None, indexes)
+
+            transformations_per_segments = vae.module.decoder(latent_variables)
+            transformations_per_segments = torch.reshape(transformations, (N_batch, -1, 9))
+            loss = torch.mean(torch.sum((transformations_per_segments - target_pretrain)**2, dim=(-1, -2))
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+            all_losses.append(loss.detach().cpu().numpy())
+
+        utils.monitor_pretraining(all_losses)
 
 def start_training(vae, image_translator, ctf, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings, scheduler, 
     base_structure, lp_mask2d, mask_images, amortized, path_results, structural_loss_parameters, segmenter, gpu_id):
@@ -64,9 +103,9 @@ def start_training(vae, image_translator, ctf, grid, gmm_repr, optimizer, datase
                 latent_variables, latent_mean, latent_std = vae.module.sample_latent(None, indexes)
 
             segmentation = segmenter.module.sample_segments(batch_images.shape[0])
-            quaternions_per_domain, translations_per_domain = vae.module.decode(latent_variables)
+            r6_rotation_per_domain, translations_per_domain = vae.module.decode(latent_variables)
             translation_per_residue = model.utils.compute_translations_per_residue(translations_per_domain, segmentation, base_structure.coord.shape[0], batch_size, gpu_id)
-            predicted_structures = model.utils.deform_structure(gmm_repr.mus, translation_per_residue, quaternions_per_domain, segmentation, gpu_id)
+            predicted_structures = model.utils.deform_structure(gmm_repr.mus, translation_per_residue, r6_rotation_per_domain, segmentation, gpu_id)
             posed_predicted_structures = renderer.rotate_structure(predicted_structures, batch_poses)
             predicted_images  = renderer.project(posed_predicted_structures, gmm_repr.sigmas, gmm_repr.amplitudes, grid)
             batch_predicted_images = renderer.apply_ctf(predicted_images, ctf, indexes)/dataset.f_std
