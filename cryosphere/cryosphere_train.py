@@ -66,6 +66,7 @@ def pre_training(vae, image_translator, ctf, grid, gmm_repr, optimizer, dataset,
             else:
                 latent_variables, latent_mean, latent_std = vae.module.sample_latent(None, indexes)
 
+            N_batch = latent_variables.shape[0]
             transformations_per_segments = vae.module.decoder(latent_variables)
             transformations_per_segments = torch.reshape(transformations_per_segments, (N_batch, -1, 9))
             print("TRANSFORMATION PER SEGMENTS", transformations_per_segments)
