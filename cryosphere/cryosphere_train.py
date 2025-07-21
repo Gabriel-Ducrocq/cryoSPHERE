@@ -47,7 +47,7 @@ def pre_training(vae, image_translator, ctf, grid, gmm_repr, optimizer, dataset,
     target_pretrain[0, 0, 3] = 1
     target_pretrain[0, 0, 6] = 1
 
-    for epoch in range(10):
+    for epoch in range(1):
         data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers = experiment_settings["num_workers"], drop_last=True, sampler=DistributedSampler(dataset, drop_last=True))
         start_tot = time()
         data_loader.sampler.set_epoch(epoch) 
