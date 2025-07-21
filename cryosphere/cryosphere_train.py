@@ -77,7 +77,7 @@ def pre_training(vae, image_translator, ctf, grid, gmm_repr, optimizer, dataset,
             optimizer.zero_grad()
             all_losses.append(loss.detach().cpu().numpy())
 
-        monitor_pretraining(all_losses)
+        monitor_pretraining(all_losses, gpu_id)
 
 def start_training(vae, image_translator, ctf, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings, scheduler, 
     base_structure, lp_mask2d, mask_images, amortized, path_results, structural_loss_parameters, segmenter, gpu_id):

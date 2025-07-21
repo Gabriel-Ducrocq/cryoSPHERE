@@ -394,12 +394,13 @@ class SpatialGridTranslate(torch.nn.Module):
         sampled = einops.rearrange(sampled, "B 1 T (NY NX) -> B T NY NX", NX=NX, NY=NY)
         return sampled[:, 0, :, :]
 
-def monitor_pretraining(all_losses):
+def monitor_pretraining(all_losses, gpu_id):
     """
     Monitors the pretraining of the network
     :param loss: torch.tensor(1) value of the loss.
     """
-    wandb.log({"epoch_loss": np.mean(all_losses)})
+    if gpu_id == 0:
+        wandb.log({"epoch_loss": np.mean(all_losses)})
 
 def monitor_training(segmentation, segmenter, tracking_metrics, experiment_settings, vae, optimizer, pred_im, true_im, gpu_id):
     """
