@@ -13,7 +13,7 @@ from cryosphere.model import renderer
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
-from cryosphere.model.utils import low_pass_images, ddp_setup
+from cryosphere.model.utils import low_pass_images, ddp_setup, monitor_pretraining
 from torch.distributed import destroy_process_group
 from cryosphere.model.loss import compute_loss, find_range_cutoff_pairs, remove_duplicate_pairs, find_continuous_pairs, calc_dist_by_pair_indices
 
@@ -69,14 +69,15 @@ def pre_training(vae, image_translator, ctf, grid, gmm_repr, optimizer, dataset,
             N_batch = latent_variables.shape[0]
             transformations_per_segments = vae.module.decoder(latent_variables)
             transformations_per_segments = torch.reshape(transformations_per_segments, (N_batch, -1, 9))
-            print("TRANSFORMATION PER SEGMENTS", transformations_per_segments)
+            print("R6 PER SEGMENTS", transformations_per_segments[:, :, 3:])
+            print("Translation PER SEGMENTS", transformations_per_segments[:, :, :3])
             loss = torch.mean(torch.sum((transformations_per_segments - target_pretrain)**2, dim=(-1, -2)))
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
             all_losses.append(loss.detach().cpu().numpy())
 
-        utils.monitor_pretraining(all_losses)
+        monitor_pretraining(all_losses)
 
 def start_training(vae, image_translator, ctf, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings, scheduler, 
     base_structure, lp_mask2d, mask_images, amortized, path_results, structural_loss_parameters, segmenter, gpu_id):
