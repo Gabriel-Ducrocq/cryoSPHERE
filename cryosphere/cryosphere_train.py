@@ -43,7 +43,7 @@ def pre_training(vae, image_translator, ctf, grid, gmm_repr, optimizer, dataset,
     base_structure, lp_mask2d, mask_images, amortized, path_results, structural_loss_parameters, segmenter, gpu_id):
     vae = DDP(vae, device_ids=[gpu_id])
     segmenter = DDP(segmenter, device_ids=[gpu_id])
-    target_pretrain = torch.zeros(1, 1, 9, dtype=torch.float32, device=device)
+    target_pretrain = torch.zeros(1, 1, 9, dtype=torch.float32, device=gpu_id)
     target_pretrain[0, 0, 3] = 1
     target_pretrain[0, 0, 6] = 1
 
