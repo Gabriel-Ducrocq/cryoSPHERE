@@ -68,7 +68,7 @@ def pre_training(vae, image_translator, ctf, grid, gmm_repr, optimizer, dataset,
 
             transformations_per_segments = vae.module.decoder(latent_variables)
             transformations_per_segments = torch.reshape(transformations, (N_batch, -1, 9))
-            loss = torch.mean(torch.sum((transformations_per_segments - target_pretrain)**2, dim=(-1, -2))
+            loss = torch.mean(torch.sum((transformations_per_segments - target_pretrain)**2, dim=(-1, -2)))
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
