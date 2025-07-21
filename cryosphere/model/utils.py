@@ -496,7 +496,7 @@ def rotate_residues_einops(atom_positions, r6_rotation, segmentation, device):
     """
 
     N_residues = segmentation.shape[1]
-    batch_size = quaternions.shape[0]
+    batch_size = r6_rotation.shape[0]
     N_segments = segmentation.shape[-1]
 
     r6_rotation = r6_rotation.view(batch_size, N_segments, 3, 2)
