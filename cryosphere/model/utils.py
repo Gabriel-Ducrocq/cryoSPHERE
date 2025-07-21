@@ -503,7 +503,7 @@ def rotate_residues_einops(atom_positions, r6_rotation, segmentation, device):
     #rotation_matrices is a tensor of shape (N_batch, N_segments, 3, 3)
     rotation_matrices = roma.special_gramschmidt(r6_rotation, epsilon=1e-10)
     #rotation_mat_per_res has shape (N_batch, N_residues, 3, 3)
-    average_mat_per_res = torch.sum(rotation_matrices[:, None, :, :, :]*segmentation[:, :, :, None, None], dinm = 2)
+    average_mat_per_res = torch.sum(rotation_matrices[:, None, :, :, :]*segmentation[:, :, :, None, None], dim = 2)
     #rotation_mat_per_res has shape (N_batch, N_residues, 3, 3)
     rotation_mat_per_residue = roma.special_procrustes(rotation_mat_per_res)
     atom_positions = torch.einsum("brij, rj -> bri", rotation_mat_per_residue, atom_positions)
