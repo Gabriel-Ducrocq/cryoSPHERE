@@ -31,7 +31,7 @@ from cryosphere.model.segmentation import Segmentation
 #from pytorch3d.transforms import quaternion_to_axis_angle, axis_angle_to_matrix, axis_angle_to_quaternion, quaternion_apply
 from cryosphere.model.loss import compute_loss, find_range_cutoff_pairs, remove_duplicate_pairs, find_continuous_pairs, calc_dist_by_pair_indices
 import roma
-from roma import unitquat_to_rotvec, rotvec_to_rotmat, rotvec_to_unitquat
+from roma import unitquat_to_rotvec, rotvec_to_rotmat, rotvec_to_unitquat, quat_composition
 
 
 
@@ -497,15 +497,10 @@ def rotate_residues_einops(atom_positions, quaternions, segmentation, device):
     segmentation_rotation_per_segments_axis_angle = segmentation[:, :, :, None] * rotation_per_segments_axis_angle[:, None, :, :]
     #The below tensor is [N_batch, N_residues, N_segments, 4] with the real part as the last element from now on !!!!!
     segmentation_rotation_per_segments_quaternions = rotvec_to_unitquat(segmentation_rotation_per_segments_axis_angle)
+    segmentation_rotation_per_residue = quat_composition(segmentation_rotation_per_segments_quaternions, normalize=True)
     #T = Transform3d(dtype=torch.float32, device = device)
-    transform = roma.RotationUnitQuat(segmentation_rotation_per_segments_quaternions[:, :, 0, :])
+    transform = roma.RotationUnitQuat(segmentation_rotation_per_residue)
     atom_positions = transform.apply(atom_positions[None, :, :])
-    #atom_positions = quaternion_apply(segmentation_rotation_per_segments_quaternions[:, :, 0, :], atom_positions)
-    for segm in range(1, N_segments):
-        transform = roma.RotationUnitQuat(segmentation_rotation_per_segments_quaternions[:, :, segm, :])
-        atom_positions = transform.apply(atom_positions)
-        #atom_positions = quaternion_apply(segmentation_rotation_per_segments_quaternions[:, :, segm, :], atom_positions)
-
     return atom_positions
 
 def compute_translations_per_residue(translation_vectors, segmentations, N_residues, batch_size, device):
