@@ -500,6 +500,8 @@ def rotate_residues_einops(atom_positions, quaternions, segmentation, device):
     segmentation_rotation_per_residue = quat_composition(segmentation_rotation_per_segments_quaternions, normalize=True)
     #T = Transform3d(dtype=torch.float32, device = device)
     transform = roma.RotationUnitQuat(segmentation_rotation_per_residue)
+    print("Quaternions shape", segmentation_rotation_per_residue.shape)
+    print("atom positions", atom_positions.shape)
     atom_positions = transform.apply(atom_positions[None, :, :])
     return atom_positions
 
