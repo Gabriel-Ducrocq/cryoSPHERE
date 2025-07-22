@@ -497,7 +497,8 @@ def rotate_residues_einops(atom_positions, quaternions, segmentation, device):
     segmentation_rotation_per_segments_axis_angle = segmentation[:, :, :, None] * rotation_per_segments_axis_angle[:, None, :, :]
     #The below tensor is [N_batch, N_residues, N_segments, 4] with the real part as the last element from now on !!!!!
     segmentation_rotation_per_segments_quaternions = rotvec_to_unitquat(segmentation_rotation_per_segments_axis_angle)
-    segmentation_rotation_per_residue = quat_composition(segmentation_rotation_per_segments_quaternions, normalize=True)
+    segmentation_rotation_per_residue = quat_composition(torch.transpose(segmentation_rotation_per_segments_quaternions, dim0=0, dim1=2), normalize=True)
+    segmentation_rotation_per_residue = torch.transpose(segmentation_rotation_per_segments_quaternions, dim0=0, dim1=1)
     #T = Transform3d(dtype=torch.float32, device = device)
     transform = roma.RotationUnitQuat(segmentation_rotation_per_residue)
     print("Quaternions shape", segmentation_rotation_per_residue.shape)
