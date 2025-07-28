@@ -16,6 +16,8 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import destroy_process_group
 from cryosphere.model.polymer import Polymer
+from cryosphere.model import renderer
+from cryosphere.model.dataset import starfile_reader
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from torch.utils.data import DataLoader
@@ -34,8 +36,46 @@ parser_arg.add_argument("--num_points", type=int, required=False, default= 20, h
 parser_arg.add_argument('--dimensions','--list', nargs='+', type=int, default= [0, 1, 2], help='<Required> PC dimensions along which we compute the trajectories. If not set, use pc 1, 2, 3', required=False)
 parser_arg.add_argument('--generate_structures', action=argparse.BooleanOptionalAction, default= False, help="""If False: run a PCA analysis with PCA traversal. If True,
                             generates the structures corresponding to the latent variables given in z.""")
+parser_arg.add_argument('--generate_images', action=argparse.BooleanOptionalAction, default= False, help="""If False: run a PCA analysis with PCA traversal. If True,
+                            generates the images corresponding to the latent variables given in z.""")
 
 
+
+def convert_poses_to_relion(poses_rotations):
+    """
+    converts the rotation matrices and translation vectors to a dictionnary
+    poses_rotations: np.array(N_images, 3, 3) of rotation matrix in cryoSPHERE conventions
+    return dict
+    """
+    ## Note that cryoDRGN uses the transposed matrix obtained from the Euler angles.
+    ## Note also that Relion uses left multiplication with the rotation matrix obtained from the Euler angles (ZYZ). It rotates the grid, so this rotation 
+    ## matrix should be the transpose of the cryoSphere rotation matrix.
+    poses_rotations = poses_rotations.transpose((0, 2, 1))
+    poses_rotations = Rotation.from_matrix(poses_rotations)
+    poses_rotations_euler = poses_rotations.as_euler("ZYZ", degrees=True)
+
+    poses_dict = {"rlnAngleRot":poses_rotations_euler[:, 0], 
+    "rlnAngleTilt":poses_rotations_euler[:, 1], "rlnAnglePsi":poses_rotations_euler[:, 2]}
+    return poses_dict
+
+def create_star_file(poses_rotations, particle_mrcs, N_images, N_pixels, apix, ctf_yaml, output_path):
+    """
+    create a star file based on the ctf and poses
+    poses_rotations: np.array(N_images, 3, 3) of rotation matrix in cryoSPHERE conventions
+    particle_mrcs: str, name of the mrc file containing the particles.
+    N_images: int, number of particles
+    N_pixels: int, number of pixels on one side
+    output_path: str, path to the star file
+    """
+    assert output_path.split(".")[-1] == "star", "The file must have a star extension."
+    poses_dict = convert_poses_to_relion(poses_rotations, shiftX, shiftY)
+    particle_dict = {"rlnImageName":[f"{i}@{particle_mrcs}" for i in range(1, N_images+1)], "rlnMicrographName":["NoName"]*N_images}
+    ctf_dict = {"rlnOpticsGroupName":"opticsGroup1", "rlnOpticsGroup":1, "rlnMicrographOriginalPixelSize":200, "rlnImagePixelSize": apix, "rlnImageSize":N_pixels, 
+                "rlnImageDimensionality":2}
+    optics_df = pd.DataFrame(ctf_dict, index=[0])
+    particle_dict.update(poses_dict)
+    particle_df = pd.DataFrame(particle_dict)
+    starfile.write({"optics": optics_df, "particles":particle_df}, output_path)
 
 class LatentDataSet(Dataset):
     def __init__(self, z):
@@ -294,7 +334,7 @@ def run_pca_analysis(vae, z, dimensions, num_points, output_path, gmm_repr, base
             save_structures_pca(predicted_structures, 0, output_path, base_structure)
 
 
-def generate_structures_wrapper(rank, world_size, z, base_structure, path_structures, batch_size, gmm_repr, yaml_setting_path, model_path, segmenter_path):
+def generate_structures_wrapper(rank, world_size, z, base_structure, path_structures, batch_size, gmm_repr, yaml_setting_path, model_path, segmenter_path, generate_structures, generate_images):
     """
     Wrapper function to decode the latent variable in parallel
     :param rank: integer, rank of the device
@@ -306,25 +346,60 @@ def generate_structures_wrapper(rank, world_size, z, base_structure, path_struct
     utils.ddp_setup(rank, world_size)
     (vae, image_translator, ctf_experiment, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings, device,
     scheduler, base_structure, lp_mask2d, mask, amortized, path_results, structural_loss_parameters, segmenter)  = utils.parse_yaml(yaml_setting_path, rank, analyze=True)
+    poses_rotation, _ = starfile_reader(experiment_settings["cs_star_file"]["file"], 1.0)
     vae.load_state_dict(torch.load(model_path))
     vae.eval()
     segmenter.load_state_dict(torch.load(segmenter_path))
     segmenter.eval()
     latent_variable_dataset = LatentDataSet(z)
-    generate_structures(rank, vae, segmenter, base_structure, path_structures, latent_variable_dataset, batch_size, gmm_repr)
+    generate_structures(rank, world_size, vae, segmenter, base_structure, path_structures, latent_variable_dataset, batch_size, gmm_repr, poses_rotation, grid)
     destroy_process_group()
 
-def generate_structures(rank, vae, segmenter, base_structure, path_structures, latent_variable_dataset, batch_size, gmm_repr):
+def generate_structures(rank, world_size, vae, segmenter, base_structure, path_structures, latent_variable_dataset, batch_size, gmm_repr, generate_structures, generate_images, poses_rotation, grid):
     vae = DDP(vae, device_ids=[rank])
     segmenter = DDP(segmenter, device_ids=[rank])
+    all_predicted_images = []
+    all_indexes = []
     latent_variables_loader = iter(DataLoader(latent_variable_dataset, shuffle=False, batch_size=batch_size, num_workers=4, drop_last=False, sampler=DistributedSampler(latent_variable_dataset, shuffle=False)))
     for batch_num, (indexes, z) in enumerate(latent_variables_loader): 
+        batch_poses = poses_rotation[idx].to(rank)
         z = z.to(rank)
         predicted_structures = predict_structures(vae.module, z, gmm_repr, segmenter.module, rank)
-        save_structures(predicted_structures, base_structure, batch_num, path_structures, batch_size, indexes)
+        if generate_structures:
+            save_structures(predicted_structures, base_structure, batch_num, path_structures, batch_size, indexes)
+        if generate_images:
+            posed_predicted_structures = renderer.rotate_structure(predicted_structures, batch_poses)
+            predicted_images  = renderer.project(posed_predicted_structures, gmm_repr.sigmas, gmm_repr.amplitudes, grid)
 
 
-def analyze(yaml_setting_path, model_path, segmenter_path, output_path, z, thinning=1, dimensions=[0, 1, 2], num_points=10, generate_structures=False):
+            if rank == 0:
+                batch_predicted_images_list = [torch.zeros_like(predicted_images, device=predicted_images.device).contiguous() for _ in range(world_size)]
+                batch_indexes = [torch.zeros_like(indexes, device=predicted_images.device).contiguous() for _ in range(world_size)]
+                gather(predicted_images, batch_predicted_images_list)
+                gather(indexes, batch_indexes)
+            else:
+                gather(predicted_images)
+                gather(indexes)
+
+            if rank == 0:
+                all_gpu_indexes = torch.concat(batch_indexes, dim=0)
+                all_gpu_predicted_images = torch.concat(batch_predicted_images_list, dim=0)
+                sorted_batch_indexes = torch.argsort(all_gpu_indexes, dim=0)
+                sorted_batch_latent_mean = all_gpu_predicted_images[sorted_batch_indexes]
+                all_predicted_images.append(sorted_batch_latent_mean.detach().cpu().numpy())
+                all_indexes.append(all_gpu_indexes[sorted_batch_indexes].detach().cpu().numpy())
+
+    if rank == 0:
+        all_predicted_images= np.concatenate(all_predicted_images, axis=0)
+        all_indexes = np.concatenate(all_indexes, axis = 0)
+        mrc_path = os.path.join(output_path, "predicted_particles.mrc")
+        mrc.MRCFile.write(mrc_path, all_predicted_images, Apix=grid.voxel_size, is_vol=False)
+        print("Saving poses and ctf in star format.")
+        output_path = f"{folder_experiment}particles.star"
+        create_star_file(poses_rotations.detach().cpu().numpy(), "predicted_particles.mrc", len(all_predicted_images), grid.side_n_pixels , grid.voxel_size, output_path)
+
+
+def analyze(yaml_setting_path, model_path, segmenter_path, output_path, z, thinning=1, dimensions=[0, 1, 2], num_points=10, generate_structures=False, generate_images=False):
     """
     train a VAE network
     :param yaml_setting_path: str, path the yaml containing all the details of the experiment.
@@ -348,7 +423,7 @@ def analyze(yaml_setting_path, model_path, segmenter_path, output_path, z, thinn
         latent_path = os.path.join(output_path, "z.npy")
         z = np.load(latent_path)
 
-    if not generate_structures:
+    if not generate_structures and not generate_images:
         run_pca_analysis(vae, z, dimensions, num_points, output_path, gmm_repr, base_structure, thinning, segmenter, device=device)
 
     else:
@@ -358,7 +433,8 @@ def analyze(yaml_setting_path, model_path, segmenter_path, output_path, z, thinn
 
         z = torch.tensor(z, dtype=torch.float32)
         latent_variable_dataset = LatentDataSet(z)
-        mp.spawn(generate_structures_wrapper, args=(world_size, z, base_structure, path_structures, batch_size, gmm_repr, yaml_setting_path, model_path, segmenter_path), nprocs=world_size)
+        mp.spawn(generate_structures_wrapper, args=(world_size, z, base_structure, path_structures, batch_size, gmm_repr, yaml_setting_path, model_path, 
+                                                    segmenter_path, generate_structures, generate_images, apix), nprocs=world_size)
 
 
 def analyze_run():
@@ -375,7 +451,8 @@ def analyze_run():
         z = np.load(args.z)
         
     generate_structures = args.generate_structures
-    analyze(path, model_path, segmenter_path, output_path, z, dimensions=dimensions, generate_structures=generate_structures, thinning=thinning, num_points=num_points)
+    generate_images = args.generate_images
+    analyze(path, model_path, segmenter_path, output_path, z, dimensions=dimensions, generate_structures=generate_structures, generate_images=generate_images, thinning=thinning, num_points=num_points)
 
 
 if __name__ == '__main__':
