@@ -334,7 +334,7 @@ def run_pca_analysis(vae, z, dimensions, num_points, output_path, gmm_repr, base
             save_structures_pca(predicted_structures, 0, output_path, base_structure)
 
 
-def generate_structures_wrapper(rank, world_size, z, base_structure, path_structures, batch_size, gmm_repr, yaml_setting_path, model_path, segmenter_path, generate_structures, generate_images):
+def generate_structures_wrapper(rank, world_size, z, base_structure, path_structures, batch_size, gmm_repr, yaml_setting_path, model_path, segmenter_path, generate_struct, generate_images):
     """
     Wrapper function to decode the latent variable in parallel
     :param rank: integer, rank of the device
@@ -352,10 +352,10 @@ def generate_structures_wrapper(rank, world_size, z, base_structure, path_struct
     segmenter.load_state_dict(torch.load(segmenter_path))
     segmenter.eval()
     latent_variable_dataset = LatentDataSet(z)
-    generate_structures(rank, world_size, vae, segmenter, base_structure, path_structures, latent_variable_dataset, batch_size, gmm_repr, poses_rotation, grid)
+    generate_structures(rank, world_size, vae, segmenter, base_structure, path_structures, latent_variable_dataset, batch_size, gmm_repr, generate_struct, generate_images, poses_rotation, grid)
     destroy_process_group()
 
-def generate_structures(rank, world_size, vae, segmenter, base_structure, path_structures, latent_variable_dataset, batch_size, gmm_repr, generate_structures, generate_images, poses_rotation, grid):
+def generate_structures(rank, world_size, vae, segmenter, base_structure, path_structures, latent_variable_dataset, batch_size, gmm_repr, generate_struct, generate_images, poses_rotation, grid):
     vae = DDP(vae, device_ids=[rank])
     segmenter = DDP(segmenter, device_ids=[rank])
     all_predicted_images = []
@@ -365,7 +365,7 @@ def generate_structures(rank, world_size, vae, segmenter, base_structure, path_s
         batch_poses = poses_rotation[idx].to(rank)
         z = z.to(rank)
         predicted_structures = predict_structures(vae.module, z, gmm_repr, segmenter.module, rank)
-        if generate_structures:
+        if generate_struct:
             save_structures(predicted_structures, base_structure, batch_num, path_structures, batch_size, indexes)
         if generate_images:
             posed_predicted_structures = renderer.rotate_structure(predicted_structures, batch_poses)
