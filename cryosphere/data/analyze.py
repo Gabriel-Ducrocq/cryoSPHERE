@@ -362,7 +362,7 @@ def generate_structures(rank, world_size, vae, segmenter, base_structure, path_s
     all_indexes = []
     latent_variables_loader = iter(DataLoader(latent_variable_dataset, shuffle=False, batch_size=batch_size, num_workers=4, drop_last=False, sampler=DistributedSampler(latent_variable_dataset, shuffle=False)))
     for batch_num, (indexes, z) in enumerate(latent_variables_loader): 
-        batch_poses = poses_rotation[idx].to(rank)
+        batch_poses = poses_rotation[indexes].to(rank)
         z = z.to(rank)
         predicted_structures = predict_structures(vae.module, z, gmm_repr, segmenter.module, rank)
         if generate_struct:
