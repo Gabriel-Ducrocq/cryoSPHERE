@@ -373,8 +373,8 @@ def generate_structures(rank, world_size, vae, segmenter, base_structure, path_s
 
 
             if rank == 0:
-                batch_predicted_images_list = [torch.zeros_like(predicted_images, device=predicted_images.device).contiguous() for _ in range(world_size)]
-                batch_indexes = [torch.zeros_like(indexes, device=predicted_images.device).contiguous() for _ in range(world_size)]
+                batch_predicted_images_list = [torch.zeros_like(predicted_images, device=rank).contiguous() for _ in range(world_size)]
+                batch_indexes = [torch.zeros_like(indexes, device=rank).contiguous() for _ in range(world_size)]
                 gather(predicted_images, batch_predicted_images_list)
                 gather(indexes, batch_indexes)
             else:
