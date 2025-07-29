@@ -434,7 +434,7 @@ def analyze(yaml_setting_path, model_path, segmenter_path, output_path, z, thinn
         z = torch.tensor(z, dtype=torch.float32)
         latent_variable_dataset = LatentDataSet(z)
         mp.spawn(generate_structures_wrapper, args=(world_size, z, base_structure, path_structures, batch_size, gmm_repr, yaml_setting_path, model_path, 
-                                                    segmenter_path, generate_structures, generate_images, apix), nprocs=world_size)
+                                                    segmenter_path, generate_structures, generate_images, grid.voxel_size), nprocs=world_size)
 
 
 def analyze_run():
