@@ -362,6 +362,7 @@ def generate_structures(rank, world_size, vae, segmenter, base_structure, path_s
     all_indexes = []
     latent_variables_loader = iter(DataLoader(latent_variable_dataset, shuffle=False, batch_size=batch_size, num_workers=4, drop_last=False, sampler=DistributedSampler(latent_variable_dataset, shuffle=False)))
     for batch_num, (indexes, z) in enumerate(latent_variables_loader): 
+        print("BATCH NUM", batch_num)
         batch_poses = poses_rotation[indexes].to(rank)
         z = z.to(rank)
         predicted_structures = predict_structures(vae.module, z, gmm_repr, segmenter.module, rank)
@@ -375,11 +376,11 @@ def generate_structures(rank, world_size, vae, segmenter, base_structure, path_s
             if rank == 0:
                 batch_predicted_images_list = [torch.zeros_like(predicted_images, device=rank).contiguous() for _ in range(world_size)]
                 batch_indexes = [torch.zeros_like(indexes, device=rank).contiguous() for _ in range(world_size)]
-                gather(predicted_images, batch_predicted_images_list)
-                gather(indexes.to(rank), batch_indexes)
+                gather(predicted_images.contiguous(), batch_predicted_images_list)
+                gather(indexes.to(rank).contiguous(), batch_indexes)
             else:
-                gather(predicted_images)
-                gather(indexes)
+                gather(predicted_images.contiguous())
+                gather(indexes.contiguous())
 
             if rank == 0:
                 all_gpu_indexes = torch.concat(batch_indexes, dim=0)
