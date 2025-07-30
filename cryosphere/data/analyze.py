@@ -59,7 +59,7 @@ def convert_poses_to_relion(poses_rotations):
     "rlnAngleTilt":poses_rotations_euler[:, 1], "rlnAnglePsi":poses_rotations_euler[:, 2]}
     return poses_dict
 
-def create_star_file(poses_rotations, particle_mrcs, N_images, N_pixels, apix, ctf_yaml, output_path):
+def create_star_file(poses_rotations, particle_mrcs, N_images, N_pixels, apix, output_path):
     """
     create a star file based on the ctf and poses
     poses_rotations: np.array(N_images, 3, 3) of rotation matrix in cryoSPHERE conventions
