@@ -69,7 +69,7 @@ def create_star_file(poses_rotations, particle_mrcs, N_images, N_pixels, apix, o
     output_path: str, path to the star file
     """
     assert output_path.split(".")[-1] == "star", "The file must have a star extension."
-    poses_dict = convert_poses_to_relion(poses_rotations, shiftX, shiftY)
+    poses_dict = convert_poses_to_relion(poses_rotations)
     particle_dict = {"rlnImageName":[f"{i}@{particle_mrcs}" for i in range(1, N_images+1)], "rlnMicrographName":["NoName"]*N_images}
     ctf_dict = {"rlnOpticsGroupName":"opticsGroup1", "rlnOpticsGroup":1, "rlnMicrographOriginalPixelSize":200, "rlnImagePixelSize": apix, "rlnImageSize":N_pixels, 
                 "rlnImageDimensionality":2}
