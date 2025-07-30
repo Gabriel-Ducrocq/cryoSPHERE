@@ -397,7 +397,7 @@ def generate_structures(rank, world_size, vae, segmenter, base_structure, path_s
         mrc_path = os.path.join(path_structures, "predicted_particles.mrc")
         mrc.MRCFile.write(mrc_path, all_predicted_images, Apix=grid.voxel_size, is_vol=False)
         print("Saving poses and ctf in star format.")
-        output_path = f"{folder_experiment}particles.star"
+        output_path = f"{path_structures}particles.star"
         create_star_file(poses_rotations.detach().cpu().numpy(), "predicted_particles.mrc", len(all_predicted_images), grid.side_n_pixels , grid.voxel_size, output_path)
 
 
