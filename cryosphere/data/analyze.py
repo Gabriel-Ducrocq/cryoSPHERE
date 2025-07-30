@@ -18,6 +18,7 @@ from torch.distributed import destroy_process_group
 from cryosphere.model.polymer import Polymer
 from cryosphere.model import renderer
 from cryosphere.model.dataset import starfile_reader
+from cryosphere.data import mrc
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from torch.utils.data import DataLoader
