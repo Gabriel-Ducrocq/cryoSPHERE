@@ -393,7 +393,7 @@ def generate_structures(rank, world_size, vae, segmenter, base_structure, path_s
     if rank == 0:
         all_predicted_images= np.concatenate(all_predicted_images, axis=0)
         all_indexes = np.concatenate(all_indexes, axis = 0)
-        mrc_path = os.path.join(output_path, "predicted_particles.mrc")
+        mrc_path = os.path.join(path_structures, "predicted_particles.mrc")
         mrc.MRCFile.write(mrc_path, all_predicted_images, Apix=grid.voxel_size, is_vol=False)
         print("Saving poses and ctf in star format.")
         output_path = f"{folder_experiment}particles.star"
