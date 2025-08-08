@@ -24,6 +24,7 @@ from sklearn.decomposition import PCA
 from torch.utils.data import DataLoader
 from scipy.spatial.distance import cdist
 from scipy.spatial.transform import Rotation
+import pandas as pd
 
 
 parser_arg = argparse.ArgumentParser()
