@@ -396,11 +396,11 @@ def generate_structures(rank, world_size, vae, segmenter, base_structure, path_s
     if rank == 0:
         all_predicted_images= np.concatenate(all_predicted_images, axis=0)
         all_indexes = np.concatenate(all_indexes, axis = 0)
-        mrc_path = os.path.join(path_structures, "predicted_particles.mrc")
+        mrc_path = os.path.join(path_structures, "predicted_particles.mrcs")
         mrc.MRCFile.write(mrc_path, all_predicted_images, Apix=grid.voxel_size, is_vol=False)
         print("Saving poses and ctf in star format.")
-        output_path = f"{path_structures}particles.star"
-        create_star_file(poses_rotation.detach().cpu().numpy(), "predicted_particles.mrc", len(all_predicted_images), grid.side_n_pixels , grid.voxel_size, output_path)
+        output_path = f"{path_structures}/particles.star"
+        create_star_file(poses_rotation.detach().cpu().numpy(), "predicted_particles.mrcs", len(all_predicted_images), grid.side_n_pixels , grid.voxel_size, output_path)
 
 
 def analyze(yaml_setting_path, model_path, segmenter_path, output_path, z, thinning=1, dimensions=[0, 1, 2], num_points=10, generate_structures=False, generate_images=False):
