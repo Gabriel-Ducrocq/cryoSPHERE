@@ -10,15 +10,17 @@ import torchvision.transforms.functional as tvf
 from roma import rotvec_to_rotmat, euler_to_rotmat
 
 
-
 class Mask(torch.nn.Module):
 
     def __init__(self, im_size, rad):
         super(Mask, self).__init__()
 
         mask = torch.lt(torch.linspace(-1, 1, im_size)[None]**2 + torch.linspace(-1, 1, im_size)[:, None]**2, rad**2)
+        mask_out = torch.gt(torch.linspace(-1, 1, im_size)[None] ** 2 + torch.linspace(-1, 1, im_size)[:, None] ** 2,
+                        rad ** 2)
         # float for pl ddp broadcast compatible
         self.register_buffer('mask', mask.float())
+        self.register_buffer("mask_out", mask_out)
         self.num_masked = torch.sum(mask).item()
 
     def forward(self, x):
@@ -140,7 +142,6 @@ class ImageDataSet(Dataset):
 
         self.f_std = None
         self.f_mu = None
-        self.estimate_normalization()
 
     def estimate_normalization(self):
         if self.f_mu is None and self.f_std is None:
@@ -159,6 +160,15 @@ class ImageDataSet(Dataset):
 
     def standardize(self, images, device="cpu"):
         return (images - self.avg_image.to(device))/self.std_image.to(device)
+
+    def standardize_corner(self, images, epsilon=1e-5):
+        """
+        For each image separately, computes the mean and variances based on the corner pixels
+        and normalize the image
+        """
+        means = torch.mean(images[self.mask.mask_out])
+        stds = torch.std(images[self.mask.mask_out])
+        return (images - means)/(stds + epsilon)
 
     def __len__(self):
         return self.particles_df.shape[0]
@@ -206,14 +216,11 @@ class ImageDataSet(Dataset):
                 raise NotImplementedError            
 
         proj = proj[0]
+        proj = self.standardize_corner(images=proj)
         if self.mask is not None:
             proj = self.mask(proj)
 
         fproj = primal_to_fourier_2d(proj)
-        if self.f_mu is not None:
-            fproj = (fproj - self.f_mu) / self.f_std
-            proj = fourier_to_primal_2d(fproj).real
-
         return idx, proj, self.poses[idx], self.poses_translation[idx]/self.down_apix, fproj
 
 
