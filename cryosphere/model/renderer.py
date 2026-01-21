@@ -95,7 +95,7 @@ def apply_ctf(images, ctf, indexes):
     return torch.tensor(N_batch, N_pix, N_pix) of ctf corrupted images
     """
     fourier_images = primal_to_fourier2d(images)
-    fourier_images *= -ctf.compute_ctf(indexes)
+    fourier_images *= -ctf.compute_ctf(indexes)[:, None, :, :]
     ctf_corrupted = fourier2d_to_primal(fourier_images)
     return ctf_corrupted
 
