@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from torch.utils.data import DataLoader
 from scipy.spatial.distance import cdist
+from cryosphere.model.utils import low_pass_images, ddp_setup
 
 
 parser_arg = argparse.ArgumentParser()
@@ -139,10 +140,10 @@ def start_sample_latent(rank, world_size,  backbone_network, all_heads, yaml_set
     scheduler, base_structure, lp_mask2d, mask, amortized, path_results, structural_loss_parameters, segmenter)  = utils.parse_yaml(yaml_setting_path, rank, analyze=True)
     vae.load_state_dict(torch.load(model_path))
     vae.eval()
-    z = sample_latent_variables(rank, backbone_network, all_heads, world_size, vae, dataset, batch_size, output_path)
+    z = sample_latent_variables(rank, backbone_network, all_heads, world_size, vae, dataset, batch_size, output_path, image_translator, lp_mask2d)
     destroy_process_group()
 
-def sample_latent_variables(gpu_id, backbone_network, all_heads, world_size, vae, dataset, batch_size, output_path, num_workers=4):
+def sample_latent_variables(gpu_id, backbone_network, all_heads, world_size, vae, dataset, batch_size, output_path, image_translator, lp_mask2d, num_workers=4):
     """
     Sample all the latent variables of the dataset and save them in a .npy file
     :param vae: object of class VAE corresponding to the model we want to analyze.
@@ -164,9 +165,11 @@ def sample_latent_variables(gpu_id, backbone_network, all_heads, world_size, vae
         batch_poses = batch_poses.to(gpu_id)
         batch_poses_translation = batch_poses_translation.to(gpu_id)
         indexes = indexes.to(gpu_id)
+        batch_translated_images = image_translator.transform(batch_images, batch_poses_translation[:, None, :])
+        flattened_batch_images = batch_translated_images.flatten(start_dim=-2)
 
         batch_images = batch_images.flatten(start_dim=-2)
-        latent_variables, latent_mean, latent_std = vae.module.sample_latent(batch_images, indexes)
+        latent_variables, latent_mean, latent_std = vae.module.sample_latent(flattened_batch_images, indexes)
         latent_mean = latent_mean.contiguous()
         indexes = indexes.contiguous()
         if gpu_id == 0:
