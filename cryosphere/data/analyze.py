@@ -344,7 +344,7 @@ def analyze(yaml_setting_path, model_path, segmenter_path, output_path, z, thinn
 
     world_size = torch.cuda.device_count()
     if z is None:
-        mp.spawn(start_sample_latent, args=(world_size, yaml_setting_path, output_path, model_path, segmenter_path), nprocs=world_size)
+        mp.spawn(start_sample_latent, args=(world_size, backbone_network, all_heads, yaml_setting_path, output_path, model_path, segmenter_path), nprocs=world_size)
         latent_path = os.path.join(output_path, "z.npy")
         z = np.load(latent_path)
 
