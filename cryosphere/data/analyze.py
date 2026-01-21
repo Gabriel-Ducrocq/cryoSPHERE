@@ -133,16 +133,16 @@ def graph_traversal(z_pca, dim, num_points=10):
     traj_pca[:, dim] = np.linspace(start, stop, num_points)
     return traj_pca
 
-def start_sample_latent(rank, world_size,  yaml_setting_path, output_path, model_path, segmenter_path, num_workers=4):
+def start_sample_latent(rank, backbone_network, all_heads, world_size,  yaml_setting_path, output_path, model_path, segmenter_path, num_workers=4):
     utils.ddp_setup(rank, world_size)
-    (vae, image_translator, ctf_experiment, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings, device,
+    (vae, backbone_network, all_heads, image_translator, ctf_experiment, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings, device,
     scheduler, base_structure, lp_mask2d, mask, amortized, path_results, structural_loss_parameters, segmenter)  = utils.parse_yaml(yaml_setting_path, rank, analyze=True)
     vae.load_state_dict(torch.load(model_path))
     vae.eval()
-    z = sample_latent_variables(rank, world_size, vae, dataset, batch_size, output_path)
+    z = sample_latent_variables(rank, backbone_network, all_heads, world_size, vae, dataset, batch_size, output_path)
     destroy_process_group()
 
-def sample_latent_variables(gpu_id, world_size, vae, dataset, batch_size, output_path, num_workers=4):
+def sample_latent_variables(gpu_id, backbone_network, all_heads, world_size, vae, dataset, batch_size, output_path, num_workers=4):
     """
     Sample all the latent variables of the dataset and save them in a .npy file
     :param vae: object of class VAE corresponding to the model we want to analyze.
@@ -304,17 +304,17 @@ def generate_structures_wrapper(rank, world_size, z, base_structure, path_struct
     :param segmenter: segmenter object.
     """
     utils.ddp_setup(rank, world_size)
-    (vae, image_translator, ctf_experiment, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings, device,
+    (vae, backbone_network, all_heads, image_translator, ctf_experiment, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings, device,
     scheduler, base_structure, lp_mask2d, mask, amortized, path_results, structural_loss_parameters, segmenter)  = utils.parse_yaml(yaml_setting_path, rank, analyze=True)
     vae.load_state_dict(torch.load(model_path))
     vae.eval()
     segmenter.load_state_dict(torch.load(segmenter_path))
     segmenter.eval()
     latent_variable_dataset = LatentDataSet(z)
-    generate_structures(rank, vae, segmenter, base_structure, path_structures, latent_variable_dataset, batch_size, gmm_repr)
+    generate_structures(rank, vae, segmenter, backbone_network, all_heads, base_structure, path_structures, latent_variable_dataset, batch_size, gmm_repr)
     destroy_process_group()
 
-def generate_structures(rank, vae, segmenter, base_structure, path_structures, latent_variable_dataset, batch_size, gmm_repr):
+def generate_structures(rank, vae, segmenter, backbone_network, all_heads, base_structure, path_structures, latent_variable_dataset, batch_size, gmm_repr):
     vae = DDP(vae, device_ids=[rank])
     segmenter = DDP(segmenter, device_ids=[rank])
     latent_variables_loader = iter(DataLoader(latent_variable_dataset, shuffle=False, batch_size=batch_size, num_workers=4, drop_last=False, sampler=DistributedSampler(latent_variable_dataset, shuffle=False)))
@@ -333,7 +333,7 @@ def analyze(yaml_setting_path, model_path, segmenter_path, output_path, z, thinn
     :param structures_path: 
     :return:
     """
-    (vae, image_translator, ctf_experiment, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings, device,
+    (vae, backbone_network, all_heads, image_translator, ctf_experiment, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings, device,
     scheduler, base_structure, lp_mask2d, mask, amortized, path_results, structural_loss_parameters, segmenter)  = utils.parse_yaml(yaml_setting_path, gpu_id = 0, analyze=True)
     vae.load_state_dict(torch.load(model_path))
     vae.eval()
