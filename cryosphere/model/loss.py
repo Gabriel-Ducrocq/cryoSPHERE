@@ -395,7 +395,7 @@ def compute_loss(predicted_images, images, segmentation_image, latent_mean, late
         tracking_dict["continuity_loss"].append(continuity_loss.detach().cpu().numpy())
         tracking_dict["clashing_loss"].append(clashing_loss.detach().cpu().numpy())
         tracking_dict["clashing_loss"].append(clashing_loss.detach().cpu().numpy())
-        tracking_dict["rmsd_non_mean"].append(rmsd_non_mean.detach().cpu().numpy())
+        #tracking_dict["rmsd_non_mean"].append(rmsd_non_mean.detach().cpu().numpy())
         tracking_dict["argmins"].append(argmins.detach().cpu().numpy())
         #tracking_dict["augmentation_loss"].append(augmentation_loss.detach().cpu().numpy())
 
