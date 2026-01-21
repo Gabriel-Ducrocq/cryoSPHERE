@@ -418,3 +418,68 @@ def compute_loss(predicted_images, images, segmentation_image, latent_mean, late
     tracking_dict["betas"] = loss_weights
 
     return loss, argmins
+
+
+
+def compute_loss_old(predicted_images, images, segmentation_image, latent_mean, latent_std, vae, segmenter, experiment_settings, tracking_dict, structural_loss_parameters,
+                 epoch, predicted_structures = None, device=None):
+    """
+    Compute the entire loss
+    :param predicted_images: torch.tensor(batch_size, N_pix), predicted images
+    :param images: torch.tensor(batch_size, N_pix), true images
+    :param latent_mean:torch.tensor(batch_size, latent_dim), mean of the approximate latent distribution
+    :param latent_std:torch.tensor(batch_size, latent_dim), std of the approximate latent distribution
+    :param segmenter: object of the class VAE.
+    :param segmenter: object of the class Segmentation.
+    :param experiment_settings: dictionnary with the settings of the current experiment
+    :param tracking_dict: dictionnary containing the different metrics we want to track
+    :param structural_loss_parameters: dictionnary containing all that is required to compute the structural loss, such as the pairs for clashing loss, continuity loss and
+                                        the target distances.
+    :param predicted_structures: torch.tensor(N_batch, N_residues, 3) of predicted structures to compute the structural losses.
+    :param device: torch device on which we perform the computations.
+    :return: torch.float32, average loss over the batch dimension
+    """
+    rmsd = calc_cor_loss(predicted_images, images, segmentation_image)
+    KL_prior_latent = compute_KL_prior_latent(latent_mean, latent_std, experiment_settings["epsilon_kl"])
+    KL_prior_segmentation_means = compute_KL_prior_segments(
+        segmenter, experiment_settings["segmentation_prior"],
+        "means", epsilon_kl=experiment_settings["epsilon_kl"])
+
+    continuity_loss = calc_pair_dist_loss(predicted_structures, structural_loss_parameters["connect_pairs"],
+        structural_loss_parameters["connect_distances"])
+
+    if structural_loss_parameters["clash_pairs"] is None:
+        clashing_loss = compute_clashing_distances(predicted_structures, device, cutoff=experiment_settings["loss"]["clashing_loss"]["clashing_cutoff"])
+    else:
+        clashing_loss =  calc_clash_loss(predicted_structures, structural_loss_parameters["clash_pairs"], clash_cutoff=experiment_settings["loss"]["clashing_loss"]["clashing_cutoff"])
+
+    KL_prior_segmentation_stds = compute_KL_prior_segments(segmenter, experiment_settings["segmentation_prior"],
+                                               "stds", epsilon_kl=experiment_settings["epsilon_kl"])
+    KL_prior_segmentation_proportions = compute_KL_prior_segments(segmenter, experiment_settings["segmentation_prior"],
+                                               "proportions", epsilon_kl=experiment_settings["epsilon_kl"])
+    l2_pen = compute_l2_pen(vae)
+
+
+    loss_weights = compute_all_beta_schedule(epoch, experiment_settings["N_epochs"], experiment_settings["loss"])
+
+    pixel_num = predicted_images.shape[-1]*predicted_images.shape[-2]
+    tracking_dict["correlation_loss"].append(rmsd.detach().cpu().numpy())
+    tracking_dict["kl_prior_latent"].append(KL_prior_latent.detach().cpu().numpy())
+    tracking_dict["kl_prior_segmentation_mean"].append(KL_prior_segmentation_means.detach().cpu().numpy())
+    tracking_dict["kl_prior_segmentation_std"].append(KL_prior_segmentation_stds.detach().cpu().numpy())
+    tracking_dict["kl_prior_segmentation_proportions"].append(KL_prior_segmentation_proportions.detach().cpu().numpy())
+    tracking_dict["l2_pen"].append(l2_pen.detach().cpu().numpy())
+    tracking_dict["continuity_loss"].append(continuity_loss.detach().cpu().numpy())
+    tracking_dict["clashing_loss"].append(clashing_loss.detach().cpu().numpy())
+    tracking_dict["clashing_loss"].append(clashing_loss.detach().cpu().numpy())
+    tracking_dict["betas"] = loss_weights
+
+    loss = rmsd + loss_weights["KL_prior_latent"]*KL_prior_latent/pixel_num \
+           + loss_weights["KL_prior_segmentation_mean"]*KL_prior_segmentation_means/pixel_num \
+           + loss_weights["KL_prior_segmentation_std"] * KL_prior_segmentation_stds/pixel_num \
+           + loss_weights["KL_prior_segmentation_proportions"] * KL_prior_segmentation_proportions/pixel_num \
+           + loss_weights["l2_pen"] * l2_pen \
+           + loss_weights["continuity_loss"]*continuity_loss \
+           + loss_weights["clashing_loss"]*clashing_loss
+
+    return loss
