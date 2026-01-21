@@ -16,8 +16,8 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from cryosphere.model.utils import low_pass_images, ddp_setup
 from torch.distributed import destroy_process_group
-from cryosphere.model.loss import compute_loss, find_range_cutoff_pairs, remove_duplicate_pairs, find_continuous_pairs, calc_dist_by_pair_indices
-
+from cryosphere.model.loss import compute_loss, find_range_cutoff_pairs, remove_duplicate_pairs, find_continuous_pairs, \
+    calc_dist_by_pair_indices, compute_loss_old
 
 import matplotlib.pyplot as plt
 
@@ -92,7 +92,9 @@ def start_training(vae, backbone_network, all_heads, image_translator, ctf, grid
             posed_predicted_structures = renderer.rotate_structure(predicted_structures, batch_poses[:, None, :, :])
             predicted_images  = renderer.project(posed_predicted_structures, gmm_repr.sigmas, gmm_repr.amplitudes, grid)
             batch_predicted_images = renderer.apply_ctf(predicted_images, ctf, indexes)#/dataset.f_std
-            loss, argmins = compute_loss(batch_predicted_images, lp_batch_translated_images, None, latent_mean, latent_std, augmented_latent_mean, vae.module, segmenter.module, experiment_settings, tracking_metrics,
+            #loss, argmins = compute_loss(batch_predicted_images, lp_batch_translated_images, None, latent_mean, latent_std, augmented_latent_mean, vae.module, segmenter.module, experiment_settings, tracking_metrics,
+            #    structural_loss_parameters= structural_loss_parameters, epoch=epoch, predicted_structures=predicted_structures, device=gpu_id)
+            loss = compute_loss_old(batch_predicted_images[:, 0, :, :], lp_batch_translated_images, None, latent_mean, latent_std, vae.module, segmenter.module, experiment_settings, tracking_metrics,
                 structural_loss_parameters= structural_loss_parameters, epoch=epoch, predicted_structures=predicted_structures, device=gpu_id)
 
             loss.backward()
