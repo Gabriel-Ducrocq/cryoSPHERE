@@ -243,9 +243,9 @@ def remove_duplicate_pairs(pairs_a, pairs_b, remove_flip=True):
 def calc_cor_loss(pred_images, gt_images, mask=None):
     """
     Compute the cross-correlation for each pair (predicted_image, true) image in a batch. And average them
-    pred_images: torch.tensor(batch_size, side_shape**2) predicted images
+    pred_images: torch.tensor(batch_size, N_heads, side_shape, side_shape) predicted images
     gt_images: torch.tensor(batch_size, side_shape**2) of true images, translated according to the poses.
-    return torch.tensor(1) of average correlation accross the batch.
+    return torch.tensor(1) of average correlation across the batch.
     """
     if mask is not None:
         pred_images = mask(pred_images)
@@ -260,13 +260,14 @@ def calc_cor_loss(pred_images, gt_images, mask=None):
     #pred_images = pred_images.flatten(start_dim=2)
     #gt_images = gt_images.flatten(start_dim=2)
 
-    # b 
-    dots = (pred_images * gt_images).sum(-1)
-    # b -> b 
-    err = -dots / (gt_images.std(-1) + 1e-5) / (pred_images.std(-1) + 1e-5)
-    # b -> 1 value
+    # b
+    dots = (pred_images * gt_images[:, None, :]).sum(-1)
+    # b -> b
+    err = -dots / (gt_images[:, None, :].std(-1) + 1e-5) / (pred_images[:, :, :].std(-1) + 1e-5)
+    err, argmins = torch.min(err, dim = - 1)
+    err_non_mean = err/pixel_num
     err = err.mean() / pixel_num
-    return err
+    return err, argmins, err_non_mean
 
 def compute_KL_prior_latent(latent_mean, latent_std, epsilon_loss):
     """
@@ -341,14 +342,15 @@ def compute_clashing_distances(new_structures, device, cutoff=4):
     return torch.mean(average_clahing)
 
 
-def compute_loss(predicted_images, images, segmentation_image, latent_mean, latent_std, vae, segmenter, experiment_settings, tracking_dict, structural_loss_parameters,
+def compute_loss(predicted_images, images, segmentation_image, latent_mean, latent_std, augmented_latent_mean, vae, segmenter, experiment_settings, tracking_dict, structural_loss_parameters,
                  epoch, predicted_structures = None, device=None):
     """
     Compute the entire loss
-    :param predicted_images: torch.tensor(batch_size, N_pix), predicted images
+    :param predicted_images: torch.tensor(batch_size, N_heads, N_pix), predicted images
     :param images: torch.tensor(batch_size, N_pix), true images
     :param latent_mean:torch.tensor(batch_size, latent_dim), mean of the approximate latent distribution
     :param latent_std:torch.tensor(batch_size, latent_dim), std of the approximate latent distribution
+    :param augmented_latent_mean: torch.tensor(batch_size, latent_dim), means of the approximate latent distribution for the augmented images.
     :param segmenter: object of the class VAE.
     :param segmenter: object of the class Segmentation.
     :param experiment_settings: dictionnary with the settings of the current experiment
@@ -357,49 +359,62 @@ def compute_loss(predicted_images, images, segmentation_image, latent_mean, late
                                         the target distances.
     :param predicted_structures: torch.tensor(N_batch, N_residues, 3) of predicted structures to compute the structural losses.
     :param device: torch device on which we perform the computations.
-    :return: torch.float32, average loss over the batch dimension
+    :return: torch.float32, average loss over the batch dimension, torch.tensor argmin for each batch sample
     """
-    rmsd = calc_cor_loss(predicted_images, images, segmentation_image)
-    KL_prior_latent = compute_KL_prior_latent(latent_mean, latent_std, experiment_settings["epsilon_kl"])
-    KL_prior_segmentation_means = compute_KL_prior_segments(
-        segmenter, experiment_settings["segmentation_prior"],
-        "means", epsilon_kl=experiment_settings["epsilon_kl"])
-
-    continuity_loss = calc_pair_dist_loss(predicted_structures, structural_loss_parameters["connect_pairs"], 
-        structural_loss_parameters["connect_distances"])
-
-    if structural_loss_parameters["clash_pairs"] is None:
-        clashing_loss = compute_clashing_distances(predicted_structures, device, cutoff=experiment_settings["loss"]["clashing_loss"]["clashing_cutoff"])
-    else:
-        clashing_loss =  calc_clash_loss(predicted_structures, structural_loss_parameters["clash_pairs"], clash_cutoff=experiment_settings["loss"]["clashing_loss"]["clashing_cutoff"])
-
-    KL_prior_segmentation_stds = compute_KL_prior_segments(segmenter, experiment_settings["segmentation_prior"],
-                                               "stds", epsilon_kl=experiment_settings["epsilon_kl"])
-    KL_prior_segmentation_proportions = compute_KL_prior_segments(segmenter, experiment_settings["segmentation_prior"],
-                                               "proportions", epsilon_kl=experiment_settings["epsilon_kl"])
-    l2_pen = compute_l2_pen(vae)
-
-
+    rmsd, argmins, rmsd_non_mean = calc_cor_loss(predicted_images, images, segmentation_image)
     loss_weights = compute_all_beta_schedule(epoch, experiment_settings["N_epochs"], experiment_settings["loss"])
+    if epoch >= experiment_settings["pose_warmup"]:
+        augmentation_loss = torch.mean(torch.sum((augmented_latent_mean - latent_mean) ** 2, dim=-1))
+        KL_prior_latent = compute_KL_prior_latent(latent_mean, latent_std, experiment_settings["epsilon_kl"])
+        KL_prior_segmentation_means = compute_KL_prior_segments(
+            segmenter, experiment_settings["segmentation_prior"],
+            "means", epsilon_kl=experiment_settings["epsilon_kl"])
 
-    pixel_num = predicted_images.shape[-1]*predicted_images.shape[-2]
-    tracking_dict["correlation_loss"].append(rmsd.detach().cpu().numpy())
-    tracking_dict["kl_prior_latent"].append(KL_prior_latent.detach().cpu().numpy())
-    tracking_dict["kl_prior_segmentation_mean"].append(KL_prior_segmentation_means.detach().cpu().numpy())
-    tracking_dict["kl_prior_segmentation_std"].append(KL_prior_segmentation_stds.detach().cpu().numpy())
-    tracking_dict["kl_prior_segmentation_proportions"].append(KL_prior_segmentation_proportions.detach().cpu().numpy())
-    tracking_dict["l2_pen"].append(l2_pen.detach().cpu().numpy())
-    tracking_dict["continuity_loss"].append(continuity_loss.detach().cpu().numpy())
-    tracking_dict["clashing_loss"].append(clashing_loss.detach().cpu().numpy())
-    tracking_dict["clashing_loss"].append(clashing_loss.detach().cpu().numpy())
+        continuity_loss = calc_pair_dist_loss(predicted_structures, structural_loss_parameters["connect_pairs"],
+            structural_loss_parameters["connect_distances"])
+
+        if structural_loss_parameters["clash_pairs"] is None:
+            clashing_loss = compute_clashing_distances(predicted_structures, device, cutoff=experiment_settings["loss"]["clashing_loss"]["clashing_cutoff"])
+        else:
+            clashing_loss =  calc_clash_loss(predicted_structures, structural_loss_parameters["clash_pairs"], clash_cutoff=experiment_settings["loss"]["clashing_loss"]["clashing_cutoff"])
+
+        KL_prior_segmentation_stds = compute_KL_prior_segments(segmenter, experiment_settings["segmentation_prior"],
+                                                   "stds", epsilon_kl=experiment_settings["epsilon_kl"])
+        KL_prior_segmentation_proportions = compute_KL_prior_segments(segmenter, experiment_settings["segmentation_prior"],
+                                                   "proportions", epsilon_kl=experiment_settings["epsilon_kl"])
+        l2_pen = compute_l2_pen(vae)
+
+
+        pixel_num = predicted_images.shape[-1]*predicted_images.shape[-2]
+        tracking_dict["correlation_loss"].append(rmsd.detach().cpu().numpy())
+        tracking_dict["kl_prior_latent"].append(KL_prior_latent.detach().cpu().numpy())
+        tracking_dict["kl_prior_segmentation_mean"].append(KL_prior_segmentation_means.detach().cpu().numpy())
+        tracking_dict["kl_prior_segmentation_std"].append(KL_prior_segmentation_stds.detach().cpu().numpy())
+        tracking_dict["kl_prior_segmentation_proportions"].append(KL_prior_segmentation_proportions.detach().cpu().numpy())
+        tracking_dict["l2_pen"].append(l2_pen.detach().cpu().numpy())
+        tracking_dict["continuity_loss"].append(continuity_loss.detach().cpu().numpy())
+        tracking_dict["clashing_loss"].append(clashing_loss.detach().cpu().numpy())
+        tracking_dict["clashing_loss"].append(clashing_loss.detach().cpu().numpy())
+        tracking_dict["rmsd_non_mean"].append(rmsd_non_mean.detach().cpu().numpy())
+        tracking_dict["argmins"].append(argmins.detach().cpu().numpy())
+        #tracking_dict["augmentation_loss"].append(augmentation_loss.detach().cpu().numpy())
+
+        loss = rmsd + loss_weights["KL_prior_latent"]*KL_prior_latent/pixel_num \
+               + loss_weights["KL_prior_segmentation_mean"]*KL_prior_segmentation_means/pixel_num \
+               + loss_weights["KL_prior_segmentation_std"] * KL_prior_segmentation_stds/pixel_num \
+               + loss_weights["KL_prior_segmentation_proportions"] * KL_prior_segmentation_proportions/pixel_num \
+               + loss_weights["l2_pen"] * l2_pen \
+               + loss_weights["continuity_loss"]*continuity_loss \
+               + loss_weights["clashing_loss"]*clashing_loss #\
+               #+ loss_weights["augmentation_loss"]*augmentation_loss
+
+    else:
+        loss = rmsd
+        tracking_dict["correlation_loss"].append(rmsd.detach().cpu().numpy())
+        tracking_dict["argmins"].append(argmins.detach().cpu().numpy())
+        tracking_dict["rmsd_non_mean"].append(rmsd_non_mean.detach().cpu().numpy())
+        argmins = torch.zeros(predicted_images.shape[0])
+
     tracking_dict["betas"] = loss_weights
 
-    loss = rmsd + loss_weights["KL_prior_latent"]*KL_prior_latent/pixel_num \
-           + loss_weights["KL_prior_segmentation_mean"]*KL_prior_segmentation_means/pixel_num \
-           + loss_weights["KL_prior_segmentation_std"] * KL_prior_segmentation_stds/pixel_num \
-           + loss_weights["KL_prior_segmentation_proportions"] * KL_prior_segmentation_proportions/pixel_num \
-           + loss_weights["l2_pen"] * l2_pen \
-           + loss_weights["continuity_loss"]*continuity_loss \
-           + loss_weights["clashing_loss"]*clashing_loss
-
-    return loss
+    return loss, argmins

@@ -36,3 +36,48 @@ class MLP(nn.Module):
             return latent_mean, latent_std
 
         return output
+
+
+class MLPPose(nn.Module):
+    def __init__(self, in_dim, out_dim, intermediate_dim, device, network_type="backbone"):
+        """
+        Multi layer perceptron class. If it is of encoder type, we split the output in half along the last dimension, and pass the second half to an ELU + 1 layer because
+        we want a std for the latent distribution > 0.
+        :param in_dim: integer, input dimension
+        :param out_dim: integer, output dimension
+        :param intermediate_dim: list of integer, size of the intermediate dimensions
+        :param device: torch device on which we perform the computations
+        :param network_type: str, "encoder" of "decoder".
+        """
+        super(MLPPose, self).__init__()
+        assert network_type in ["backbone", "head"]
+        self.flatten = nn.Flatten()
+        self.type=network_type
+        self.out_dim = out_dim
+        self.output_ELU = torch.nn.ELU()
+        assert type(intermediate_dim) == type([]), "intermediate_dim should be a list containing the size of the intermediate layers."
+        self.num_hidden_layers = len(intermediate_dim)
+        self.input_layer = nn.Sequential(nn.Linear(in_dim, intermediate_dim[0], device=device), nn.LeakyReLU())
+        if network_type == "backbone":
+            self.output_layer = nn.Linear(intermediate_dim[-1], out_dim, device=device)
+        else:
+            self.output_translation_layer = nn.Linear(intermediate_dim[-1], 2, device=device)
+            self.output_rotation_layer = nn.Linear(intermediate_dim[-1], 6, device=device)
+            nn.init.normal_(self.output_translation_layer.weight, mean=0.0, std=1e-3)
+            nn.init.constant_(self.output_translation_layer.bias, 0.0)
+
+        list_intermediate = [nn.Sequential(nn.Linear(intermediate_dim[i], intermediate_dim[i+1], device=device), nn.LeakyReLU())
+                         for i in range(self.num_hidden_layers-1)]
+        self.linear_relu_stack = nn.Sequential(*[layer for layer in list_intermediate])
+
+
+    def forward(self, x):
+        x = self.input_layer(x)
+        hidden = self.linear_relu_stack(x)
+        if self.type == "head":
+            output_translation = self.output_translation_layer(hidden)
+            output = self.output_rotation_layer(hidden)
+        else:
+            output = self.output_layer(hidden)
+
+        return output

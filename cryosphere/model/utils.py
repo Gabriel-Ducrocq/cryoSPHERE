@@ -11,6 +11,8 @@ import logging
 import mrcfile
 import warnings
 import starfile
+import torchvision
+from torchvision.transforms.functional import InterpolationMode
 import numpy as np
 file_dir = os.path.dirname(__file__)
 sys.path.append(file_dir)
@@ -19,7 +21,7 @@ from tqdm import tqdm
 import torch.nn.functional as F
 from scipy.spatial import distance
 from cryosphere.model.vae import VAE
-from cryosphere.model.mlp import MLP
+from cryosphere.model.mlp import MLP, MLPPose
 from cryosphere.model.ctf import CTF
 from biotite.structure.io.pdb import PDBFile
 #from pytorch3d.transforms import Transform3d
@@ -230,6 +232,19 @@ def parse_yaml(path, gpu_id, analyze=False):
     decoder = MLP(experiment_settings["latent_dimension"], n_total_segments*6,
                   experiment_settings["decoder"]["hidden_dimensions"], network_type="decoder", device=device)
 
+    backbone_network = MLPPose(Npix_downsize ** 2,
+                  experiment_settings["backbone_net"]["output_dimension"],
+                  experiment_settings["backbone_net"]["hidden_dimensions"], network_type="backbone", device=device)
+
+    all_heads = torch.nn.ModuleList([MLPPose(experiment_settings["head_net"]["input_dimension"],
+                  6, experiment_settings["head_net"]["hidden_dimensions"], network_type="head", device=device)
+                    for i in range(experiment_settings["N_heads"])])
+
+    if experiment_settings["resume_training"]["backbone"] is not None:
+        backbone_network.load_state_dict(torch.load(experiment_settings["resume_training"]["backbone"]))
+    if experiment_settings["resume_training"]["heads"] is not None:
+        all_heads = load_all_heads(experiment_settings["resume_training"]["heads"], all_heads)
+
 
     vae = VAE(encoder, decoder, device, experiment_settings["segmentation_config"], latent_dim=experiment_settings["latent_dimension"], N_images = N_images, amortized=amortized)
     vae.to(device)
@@ -261,12 +276,18 @@ def parse_yaml(path, gpu_id, analyze=False):
         if "learning_rate_segmentation" not in experiment_settings["optimizer"]:
             list_param = [{"params": vae.parameters(), "lr":experiment_settings["optimizer"]["learning_rate"]}]
             list_param.append({"params": segmenter.parameters(), "lr":experiment_settings["optimizer"]["learning_rate"]})
+            list_param.append({"params": backbone_network.parameters(), "lr": experiment_settings["optimizer"]["lr_backbone"]})
+            for head in all_heads:
+                list_param.append({"params": head.parameters(), "lr": experiment_settings["optimizer"]["lr_heads"]})
             optimizer = torch.optim.Adam(list_param)
         else:
             list_param = [{"params": param, "lr":experiment_settings["optimizer"]["learning_rate_segmentation"]} for name, param in
                           segmenter.named_parameters() if "segments" in name]
             list_param.append({"params": vae.encoder.parameters(), "lr":experiment_settings["optimizer"]["learning_rate"]})
             list_param.append({"params": vae.decoder.parameters(), "lr":experiment_settings["optimizer"]["learning_rate"]})
+            list_param.append({"params": backbone_network.parameters(), "lr": experiment_settings["optimizer"]["lr_backbone"]})
+            for head in all_heads:
+                list_param.append({"params": head.parameters(), "lr": experiment_settings["optimizer"]["lr_heads"]})
             if not amortized:
                 list_param.append({"params": vae.latent_variables_mean, "lr":experiment_settings["optimizer"]["learning_rate"]})
 
@@ -338,7 +359,7 @@ def parse_yaml(path, gpu_id, analyze=False):
 
 
 
-    return vae, image_translator, ctf_experiment, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings, device, \
+    return vae, backbone_network, all_heads, image_translator, ctf_experiment, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings, device, \
     scheduler, base_structure, lp_mask2d, mask, amortized, path_results, structural_loss_parameters, segmenter
 
 
@@ -420,7 +441,7 @@ def monitor_training(segmentation, segmenter, tracking_metrics, experiment_setti
                     wandb.log({f"segments/{part}/segment_{l}": np.sum(hard_segments[0] == l)})
 
 
-            pred_im = pred_im[0].detach().cpu().numpy()[:, :, None]
+            pred_im = pred_im[0][int(argmins[0].detach().cpu().numpy())].detach().cpu().numpy()[:, :, None]
             true_im = true_im[0].detach().cpu().numpy()[:, :, None]
             predicted_image_wandb = wandb.Image(pred_im, caption="Predicted image")
             true_image_wandb = wandb.Image(true_im, caption="True image")
@@ -545,4 +566,24 @@ def deform_structure(atom_positions, translation_per_residue, quaternions, segme
     return new_atom_positions
 
 
+def load_all_heads(path, all_heads):
+    """
+    Load all head registered in an nn.Module
+    :param path: str, path to the module we want to load
+    """
+    parameters = torch.load(path)
+    for i, head in enumerate(all_heads):
+        head.load_state_dict({k.strip(f"{i}."):v for k, v in parameters.items() if k.startswith(f"{i}.")})
 
+
+def rotate_images(images, angle, method=None):
+    """
+    Rotates the images according to specified angle.
+    :param images: torch.tensor(batch_size, Npix, Npix) images to rotates.
+    :param angles: integer, angle in degrees for the rotation.
+    :param method: None or str, name of the interpolation method to use
+    :return: torch.tensor(batch_size, Npix, Npix) rotated images
+    """
+    rotated_images = torchvision.transforms.functional.rotate(img=images, angle=angle,
+                                                              interpolation=InterpolationMode.BILINEAR)
+    return rotated_images

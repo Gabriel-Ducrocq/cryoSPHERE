@@ -29,17 +29,19 @@ def fourier2d_to_primal(fourier_images):
 def project(Gauss_mean, Gauss_sigmas, Gauss_amplitudes, grid):
     """
     Project a volumes represented by a GMM into a 2D images, by integrating along the z axis
-    Gauss_mean: torch.tensor(batch_size, N_atoms, 3) of structures.
+    Gauss_mean: torch.tensor(batch_size, N_heads, N_atoms, 3) of structures.
     Gauss_sigmas: torch.tensor(N_atoms, 1) of std for the Gaussian kernel.
     Gauss_amplitudes: torch.tensor(N_atoms, 1) of coefficients used to scale the Gausian kernels.
     grid: grid object
     return images: torch.tensor(batch_size, N_pix, N_pix)
     """
-    sigmas = 2*Gauss_sigmas**2
+    sigmas = 2 * Gauss_sigmas ** 2
     sqrt_amp = torch.sqrt(Gauss_amplitudes)
-    proj_x = torch.exp(-(Gauss_mean[:, :, None, 0] - grid.line_coords[None, None, :])**2/sigmas[None, :, None,  0])*sqrt_amp[None, :, :]
-    proj_y = torch.exp(-(Gauss_mean[:, :, None, 1] - grid.line_coords[None, None, :])**2/sigmas[None, :, None, 0])*sqrt_amp[None, :, :]
-    images = torch.einsum("b a p, b a q -> b q p", proj_x, proj_y)
+    proj_x = torch.exp(-(Gauss_mean[:, :, :, None, 0] - grid.line_coords[None, None, None, :]) ** 2 / sigmas[None, None, :, None, 0]) * \
+             sqrt_amp[None, None, :, :]
+    proj_y = torch.exp(-(Gauss_mean[:, :, :, None, 1] - grid.line_coords[None, None, None, :]) ** 2 / sigmas[None, None, :, None, 0]) * \
+             sqrt_amp[None, None,  :, :]
+    images = torch.einsum("b h a p, b h a q -> b h q p", proj_x, proj_y)
     return images
 
 def structure_to_volume(Gauss_means, Gauss_sigmas, Gauss_amplitudes, grid, device):
@@ -64,12 +66,12 @@ def structure_to_volume(Gauss_means, Gauss_sigmas, Gauss_amplitudes, grid, devic
 
 def rotate_structure(Gauss_mean, rotation_matrices):
     """
-    Rotate a structure to obtain a posed structure.
+    Rotate a structure to obtain a posed structure, one for each head
     Gauss_mean: torch.tensor(batch_size, N_atoms, 3) of atom positions
-    rotation_matrices: torch.tensor(batch_size, 3, 3) of rotation_matrices
-    return rotated_Gauss_mean: torch.tensor(batch_size, N_atoms, 3)
+    rotation_matrices: torch.tensor(batch_size, N_heads, 3, 3) of rotation_matrices
+    return rotated_Gauss_mean: torch.tensor(batch_size, N_heads, N_atoms, 3)
     """
-    rotated_Gauss_mean = torch.einsum("b l k, b a k -> b a l", rotation_matrices, Gauss_mean)
+    rotated_Gauss_mean = torch.einsum("b h l k, b a k -> b h a l", rotation_matrices, Gauss_mean)
     return rotated_Gauss_mean
 
 
