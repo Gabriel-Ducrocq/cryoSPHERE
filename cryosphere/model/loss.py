@@ -420,6 +420,34 @@ def compute_loss(predicted_images, images, segmentation_image, latent_mean, late
     return loss, argmins
 
 
+def calc_cor_loss_old(pred_images, gt_images, mask=None):
+    """
+    Compute the cross-correlation for each pair (predicted_image, true) image in a batch. And average them
+    pred_images: torch.tensor(batch_size, side_shape**2) predicted images
+    gt_images: torch.tensor(batch_size, side_shape**2) of true images, translated according to the poses.
+    return torch.tensor(1) of average correlation accross the batch.
+    """
+    if mask is not None:
+        pred_images = mask(pred_images)
+        gt_images = mask(gt_images)
+        pixel_num = mask.num_masked
+    else:
+        pixel_num = pred_images.shape[-2] * pred_images.shape[-1]
+
+    pred_images = torch.flatten(pred_images, start_dim=-2, end_dim=-1)
+    gt_images = torch.flatten(gt_images, start_dim=-2, end_dim=-1)
+    # b, h, w -> b, num_pix
+    #pred_images = pred_images.flatten(start_dim=2)
+    #gt_images = gt_images.flatten(start_dim=2)
+
+    # b
+    dots = (pred_images * gt_images).sum(-1)
+    # b -> b
+    err = -dots / (gt_images.std(-1) + 1e-5) / (pred_images.std(-1) + 1e-5)
+    # b -> 1 value
+    err = err.mean() / pixel_num
+    return err
+
 
 def compute_loss_old(predicted_images, images, segmentation_image, latent_mean, latent_std, vae, segmenter, experiment_settings, tracking_dict, structural_loss_parameters,
                  epoch, predicted_structures = None, device=None):
@@ -439,7 +467,7 @@ def compute_loss_old(predicted_images, images, segmentation_image, latent_mean, 
     :param device: torch device on which we perform the computations.
     :return: torch.float32, average loss over the batch dimension
     """
-    rmsd = calc_cor_loss(predicted_images, images, segmentation_image)
+    rmsd = calc_cor_loss_old(predicted_images, images, segmentation_image)
     KL_prior_latent = compute_KL_prior_latent(latent_mean, latent_std, experiment_settings["epsilon_kl"])
     KL_prior_segmentation_means = compute_KL_prior_segments(
         segmenter, experiment_settings["segmentation_prior"],
