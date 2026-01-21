@@ -74,6 +74,16 @@ def rotate_structure(Gauss_mean, rotation_matrices):
     rotated_Gauss_mean = torch.einsum("b h l k, b a k -> b h a l", rotation_matrices, Gauss_mean)
     return rotated_Gauss_mean
 
+def rotate_structure_old(Gauss_mean, rotation_matrices):
+    """
+    Rotate a structure to obtain a posed structure.
+    Gauss_mean: torch.tensor(batch_size, N_atoms, 3) of atom positions
+    rotation_matrices: torch.tensor(batch_size, 3, 3) of rotation_matrices
+    return rotated_Gauss_mean: torch.tensor(batch_size, N_atoms, 3)
+    """
+    rotated_Gauss_mean = torch.einsum("b l k, b a k -> b a l", rotation_matrices, Gauss_mean)
+    return rotated_Gauss_mean
+
 
 def translate_structure(Gauss_mean, translation_vectors):
     """

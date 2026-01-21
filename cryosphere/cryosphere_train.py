@@ -89,12 +89,13 @@ def start_training(vae, backbone_network, all_heads, image_translator, ctf, grid
             predicted_r6 = predicted_r6.reshape(batch_size, -1, 3, 2)
             rotation_matrices = roma.special_gramschmidt(predicted_r6)
 
-            posed_predicted_structures = renderer.rotate_structure(predicted_structures, batch_poses[:, None, :, :])
+            #posed_predicted_structures = renderer.rotate_structure(predicted_structures, batch_poses[:, None, :, :])
+            posed_predicted_structures = renderer.rotate_structure(predicted_structures, batch_poses)
             predicted_images  = renderer.project(posed_predicted_structures, gmm_repr.sigmas, gmm_repr.amplitudes, grid)
             batch_predicted_images = renderer.apply_ctf(predicted_images, ctf, indexes)#/dataset.f_std
             #loss, argmins = compute_loss(batch_predicted_images, lp_batch_translated_images, None, latent_mean, latent_std, augmented_latent_mean, vae.module, segmenter.module, experiment_settings, tracking_metrics,
             #    structural_loss_parameters= structural_loss_parameters, epoch=epoch, predicted_structures=predicted_structures, device=gpu_id)
-            loss = compute_loss_old(batch_predicted_images[:, 0, :, :], lp_batch_translated_images, None, latent_mean, latent_std, vae.module, segmenter.module, experiment_settings, tracking_metrics,
+            loss = compute_loss_old(batch_predicted_images[:, :, :], lp_batch_translated_images, None, latent_mean, latent_std, vae.module, segmenter.module, experiment_settings, tracking_metrics,
                 structural_loss_parameters= structural_loss_parameters, epoch=epoch, predicted_structures=predicted_structures, device=gpu_id)
 
             loss.backward()
