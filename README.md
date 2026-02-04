@@ -46,6 +46,20 @@ You will be prompted to enter your API key.
 
 2/ If you do not want to use wandb and are happy with the run.log file created in the cryoSPHERE folder that cryoSPHERE creates at the beginning of the run, you just change the `wandb: True` to `wandb: False` in the yaml file containing the paramters of cryoSPHERE.
 
+## Important note as of 04/02/2026:
+
+Following the steps to log in wandb form python may result in an error:
+```
+raise ValueError(f"API key must be 40 characters long, yours was {len(key)}")
+ValueError: API key must be 40 characters long, yours was 86
+```
+In that case, you can also log in from the command line:
+```
+export WANDB_API_KEY="<Enter API Key>"
+```
+See the [documentation](https://docs.wandb.ai/models/quickstart) and the related [github issue](https://github.com/wandb/server/issues/75).
+
+
 ## Training
 ### Preliminary: consensus reconstruction.
 Before running cryoSPHERE on a dataset you need  to run a homogeneous reconstruction software such as RELION or cryoSparc. This should yield a star file containing the poses of each image, the CTF and information about the images as well as one or several mrcs file(s) containing the actual images. You should also obtain one or several mrc files corresponding to consensus reconstruction(s). For this tutorial, we assume your images are in a file called `particles.mrcs` and after a consensus reconstruction, you obain a star file named `particles.star` and a consensus reconstruction file called `consensus_map.mrc`. This naming is not mandatory, your files can have arbitrary names as long as the extension is correct. CryoSPHERE would also work with data preprocessed by cryoSparc. In that case you can directly use the `particles.cs` file.
