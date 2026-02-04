@@ -29,7 +29,7 @@ N_images: #Number of images in the dataset
 N_epochs: 300 #Number of epochs to train.
 batch_size: 128 #Size a batch. Default work well.
 epsilon_kl: 1e-10 #Default work well. epsilon added in the kl divergence to avoid log(0).
-seed: null #If set an integer, will set the torch, cuda, python and numpy seeds to that value. 
+seed: 123 #If set an integer, will set the torch, cuda, python and numpy seeds to that value. 
 deterministic_cuda: False #If true, will enforce deterministic cuda behavior.
 encoder: 
     hidden_dimensions: [512, 256, 64, 64] #List of the hidden dimensions of the encoder (from left to right)
