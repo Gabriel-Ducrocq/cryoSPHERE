@@ -1,4 +1,0 @@
-apix: 1.0 #Size of a pixel in Å
-Npix_downsize: 190 #Number of pixel along one dimension in the downsized image. Note that Npix_downsize == Npix no downsampling is applied.
-Npix: 190 #Number of pixel along one dimension of the images
-sigma_gmm: 2 #Sigma used in the Gaussian Mixture representation of the volume, see paper. We advise not to change it.
