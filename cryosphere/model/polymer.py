@@ -184,9 +184,15 @@ class Polymer:
         """
         Creates an atom array from a polymer object.
         """
-        num = len(self)
-        atom_arr = struc.AtomArray(num)
-        atom_arr.coord = self.coord
+        #num = len(self)
+        #atom_arr = struc.AtomArray(num)
+        coord = self.coord
+        if coord.ndim == 3:
+            coord = coord[0]
+ 
+        n_atoms = coord.shape[0]
+        atom_arr = struc.AtomArray(n_atoms)
+        atom_arr.coord = coord
 
         for f in dataclasses.fields(self):
             if f.name != "coord" and f.name in atom_arr.get_annotation_categories():
