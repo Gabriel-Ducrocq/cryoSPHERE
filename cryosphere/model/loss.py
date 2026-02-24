@@ -265,9 +265,7 @@ def calc_cor_loss(pred_images, gt_images, mask=None):
     # b -> b 
     err = -dots / (gt_images.std(-1) + 1e-5) / (pred_images.std(-1) + 1e-5)
     # b -> 1 value
-    
-    # insert loss from classifier !!!!
-    
+
     err = err.mean() / pixel_num
     return err
 
