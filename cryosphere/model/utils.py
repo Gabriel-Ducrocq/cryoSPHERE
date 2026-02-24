@@ -547,7 +547,18 @@ def deform_structure(res_positions, translation_per_residue, quaternions, segmen
 
 
 def deform_structure_aa(atom_positions, res_positions, expansion_map, translation_per_residue, quaternions, segmentations, device):
-
+    """
+    Deform the all atom base structure according to rotations and translation of each segment, together with the segmentation.
+    :param atom_positions: torch.tensor(N_atoms, 3)
+    :param res_positions: torch.tensor(N_residues, 3)
+    :param expansion_map: Map expansion from all atoms to respective residue.
+    :param translation_per_residue: tensor (Batch_size, N_residues, 3)
+    :param quaternions: tensor (N_batch, N_segments, 4) of quaternions for the rotation of the segments
+    :param segmentations: dictionnary of torch.tensor(N_batch, N_residues, N_segments) representing the weights of the segmentation 
+                          and mask to find the relevant residues among the protein.
+    :param device: torch device on which the computation takes place
+    :return: tensor (Batch_size, N_atoms, 3) corresponding to translated all atom structure
+    """
     batch_size = translation_per_residue.shape[0]
     transformed_res_positions = res_positions[None].repeat(batch_size, 1, 1)
     for part, segm in segmentations.items():
