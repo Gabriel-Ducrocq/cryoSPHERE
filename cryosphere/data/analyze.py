@@ -37,7 +37,7 @@ parser_arg.add_argument("--num_points", type=int, required=False, default= 20, h
 parser_arg.add_argument('--dimensions','--list', nargs='+', type=int, default= [0, 1, 2], help='<Required> PC dimensions along which we compute the trajectories. If not set, use pc 1, 2, 3', required=False)
 parser_arg.add_argument('--generate_structures', action=argparse.BooleanOptionalAction, default= False, help="""If False: run a PCA analysis with PCA traversal. If True,
                             generates the structures corresponding to the latent variables given in z.""")
-parser_arg.add_argument('--all_atom', action=argparse.BooleanOptionalAction, default=False, help="""If True generate all atom models. If False only CA models.""")
+parser_arg.add_argument('--all_atom', action=argparse.BooleanOptionalAction, default=False, help="""If True generate all atom models. If False only C-alpha models.""")
 
 
 class LatentDataSet(Dataset):
@@ -236,10 +236,12 @@ def predict_structures(vae, z_dim, gmm_repr, segmenter, device):
 
 def predict_structures_aa(vae, z_dim, gmm_repr, atom_pos, expansion_mask, segmenter, device):
     """
-    Function predicting the structures for a PC traversal along a specific PC.
+    Function predicting the all atom structures for a PC traversal along a specific PC.
     :param vae: object of class VAE.
     :param z_dim: np.array(num_points, latent_dim) coordinates of the sampled structures for the PC traversal
     :param gmm_repr: Gaussian representation. Object of class Gaussian.
+    :param atom_pos: atom positions.
+    :param expansion_mask: masking all atoms on the corresponding residues.
     :param predicted_structures: torch.tensor(num_points, N_residues, 3), predicted structutres for each one of the sampled points of the PC traversal.
     :param segmenter: object of class Segmentation
     :param device: torch device
@@ -276,8 +278,8 @@ def save_structures_pca(predicted_structures, dim, output_path, base_structure):
 
 def save_structures_pca_aa(predicted_structures, dim, output_path, base_structure):
     """
-    Save a set of structures given in a torch tensor in different pdb files.
-    :param predicted_structures: torch.tensor(N_predicted_structures, N_residues, 3), et of structures
+    Save a set of all atom structures given in a torch tensor in different pdb files.
+    :param predicted_structures: torch.tensor(N_predicted_structures, N_residues, 3), set of structures
     :param dim: integer, dimension along which we sample
     :param output_path: str, path to the directory in which we save the structures.
     :param base_structrue: object of class Polymer
@@ -305,7 +307,7 @@ def save_structures(predicted_structures, base_structure, batch_num, output_path
 
 def save_structures_aa(predicted_structures, base_structure, batch_num, output_path, batch_size, indexes):
     """
-    Save structures in batch, with the correct numbering .
+    Save all atom structures in batch, with the correct numbering .
     :param predicted_structures: torch.tensor(N_batch, N_residues, 3) of predicted structures
     :param base_structure: object of class Polymer.
     :param batch_num: integer, batch number
@@ -356,6 +358,18 @@ def run_pca_analysis(vae, z, dimensions, num_points, output_path, gmm_repr, base
 
 
 def run_pca_analysis_aa(vae, z, dimensions, num_points, output_path, gmm_repr, base_structure, atom_pos, expansion_mask, thinning, segmenter, device):
+    """
+    Runs a PCA analysis of the latent space and return PC traversals and plots of the PCA of the latent space
+    :param vae: object of class VAE.
+    :param z: torch.tensor(N_latent, latent_dim) containing all the latent variables
+    :param dimensions: list of integer, list of PC dimensions we want to traverse
+    :param num_points: integer, number of points to sample along a PC for the PC traversals
+    :param output_path: str, path to the directory where we want to save the PCA resuls
+    :param gmm_repr: object of class Gaussian.
+    :param base_structure: object of class Polymer.
+    :param segmenter: object of class segmenter.
+    :param device: torch device on which we perform the computations
+    """
     if z.shape[-1] > 1:
         all_trajectories, all_trajectories_pca, z_pca, pca = compute_traversals(z[::thinning], dimensions=dimensions, num_points=num_points)
         sns.set_style("white")
@@ -374,7 +388,7 @@ def run_pca_analysis_aa(vae, z, dimensions, num_points, output_path, gmm_repr, b
 
 def generate_structures_wrapper(rank, world_size, z, base_structure, path_structures, batch_size, gmm_repr, yaml_setting_path, model_path, segmenter_path):
     """
-    Wrapper function to decode the latent variable in parallel
+    Wrapper function to decode the latent variable in parallel (for all atom output)
     :param rank: integer, rank of the device
     :param world_size: integer, number of devices
     :param z: torch.tensor(N_latent, latent_dim) latent variable from which we want to output images.
@@ -395,12 +409,14 @@ def generate_structures_wrapper(rank, world_size, z, base_structure, path_struct
 
 def generate_structures_wrapper_aa(rank, world_size, z, atom_pos, expansion_mask, base_structure, atom_arr_stack, path_structures, batch_size, gmm_repr, yaml_setting_path, model_path, segmenter_path):
     """
-    Wrapper function to decode the latent variable in parallel
+    Wrapper function to decode the latent variable in parallel (for all atom output)
     :param rank: integer, rank of the device
     :param world_size: integer, number of devices
     :param z: torch.tensor(N_latent, latent_dim) latent variable from which we want to output images.
-    :param vae: vae object.
-    :param segmenter: segmenter object.
+    :param atom_pos: atom positions.
+    :param expansion_mask: masking all atoms to the corresponding residues.
+    :param atom_arr_stack: atom array stack of base structure.
+    :param segmenter_path: segmenter object.
     """
     utils.ddp_setup(rank, world_size)
     (vae, image_translator, ctf_experiment, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings, device,
@@ -454,7 +470,6 @@ def analyze(yaml_setting_path, model_path, segmenter_path, output_path, z, thinn
     :param yaml_setting_path: str, path the yaml containing all the details of the experiment.
     :param model_path: str, path to the model we want to analyze.
     :param segmenter_path: str, path to the segmenter used for the analysis.
-    :param structures_path: 
     :return:
     """
     (vae, image_translator, ctf_experiment, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings, device,
