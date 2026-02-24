@@ -195,10 +195,7 @@ class Polymer:
         atom_arr.coord = coord
 
         for f in dataclasses.fields(self):
-            if f.name == "coord":
-                continue
-            value = getattr(self, f.name)
-            if len(getattr(self, f.name)) == n_atoms and f.name in atom_arr.get_annotation_categories():
+            if f.name != "coord" and f.name in atom_arr.get_annotation_categories():
                 atom_arr.set_annotation(f.name, getattr(self, f.name))
         # atom_arr.atom_name[atom_arr.atom_name == "R"] = "CB"
         return atom_arr
