@@ -105,7 +105,7 @@ Once cryoSPHERE has been trained, you can get the latent variables corresponding
 ```
 cryosphere_analyze --experiment_yaml /path/to/parameters.yaml --model /path/to/model.pt --segmenter /path/to/segmenter.pt --output_path /path/to/outpout_folder --no-generate_structures
 ```
-where `model.pt` is the saved torch model you want to analyze, `segmenter.pt` is the corresponding segmentation  and output_folder is the folder where you want to save the results of the analysis.
+where `model.pt` is the saved torch model you want to analyze, `segmenter.pt` is the corresponding segmentation and output_folder is the folder where you want to save the results of the analysis.
 This will create the following directory structure:
 ```
 analysis
@@ -124,7 +124,7 @@ analysis
 	   .
            .
 ```
- If you want to generate all structures (one for each image), you can set `--generate_structures` instead. This will skip the PCA step. The file `z.npy` contains the latent variable associated to each image (in the same order as the images in the star file), the `.pdb` files are the structures sampled along the principal component (from lowest to highest values along that PC) and the `.png` files are images of the PCA decompositions.
+ If you want to generate all structures (one for each image), you can set `--generate_structures` instead.  This will skip the PCA step. To generate all atom structures instead of C-alpha models add the flag `--all_atom` (works for PCA and generating all structures). The file `z.npy` contains the latent variable associated to each image (in the same order as the images in the star file), the `.pdb` files are the structures sampled along the principal component (from lowest to highest values along that PC) and the `.png` files are images of the PCA decompositions.
 
 It is also possible to get the structures corresponding to specific images. Save the latent variables corresponding to the images of interest into a `z_interest.npy`. You can then run:
 ```
