@@ -525,10 +525,10 @@ def compute_translations_per_residue(translation_vectors, segmentations, N_resid
 
     return translation_per_residue
 
-def deform_structure(atom_positions, translation_per_residue, quaternions, segmentations, device):
+def deform_structure(res_positions, translation_per_residue, quaternions, segmentations, device):
     """
     Deform the base structure according to rotations and translation of each segment, together with the segmentation.
-    :param atom_positions: torch.tensor(N_residues, 3)
+    :param res_positions: torch.tensor(N_residues, 3)
     :param translation_per_residue: tensor (Batch_size, N_residues, 3)
     :param quaternions: tensor (N_batch, N_segments, 4) of quaternions for the rotation of the segments
     :param segmentations: dictionnary of torch.tensor(N_batch, N_residues, N_segments) representing the weights of the segmentation 
@@ -537,11 +537,40 @@ def deform_structure(atom_positions, translation_per_residue, quaternions, segme
     :return: tensor (Batch_size, N_residues, 3) corresponding to translated structure
     """
     batch_size = translation_per_residue.shape[0]
-    transformed_atom_positions = atom_positions[None, :, :].repeat((batch_size, 1, 1))
+    transformed_res_positions = res_positions[None, :, :].repeat((batch_size, 1, 1))
     for part, segm in segmentations.items():
-        transformed_atom_positions[:, segm["mask"]==1]  = rotate_residues_einops(atom_positions[segm["mask"]==1] , quaternions[part], segm["segmentation"], device)
+        transformed_res_positions[:, segm["mask"]==1]  = rotate_residues_einops(res_positions[segm["mask"]==1] , quaternions[part], segm["segmentation"], device)
 
-    new_atom_positions = transformed_atom_positions + translation_per_residue
+    new_atom_positions = transformed_res_positions + translation_per_residue
+    return new_atom_positions
+
+
+
+def deform_structure_aa(atom_positions, res_positions, expansion_map, translation_per_residue, quaternions, segmentations, device):
+    """
+    Deform the all atom base structure according to rotations and translation of each segment, together with the segmentation.
+    :param atom_positions: torch.tensor(N_atoms, 3)
+    :param res_positions: torch.tensor(N_residues, 3)
+    :param expansion_map: Map expansion from all atoms to respective residue.
+    :param translation_per_residue: tensor (Batch_size, N_residues, 3)
+    :param quaternions: tensor (N_batch, N_segments, 4) of quaternions for the rotation of the segments
+    :param segmentations: dictionnary of torch.tensor(N_batch, N_residues, N_segments) representing the weights of the segmentation 
+                          and mask to find the relevant residues among the protein.
+    :param device: torch device on which the computation takes place
+    :return: tensor (Batch_size, N_atoms, 3) corresponding to translated all atom structure
+    """
+    batch_size = translation_per_residue.shape[0]
+    transformed_res_positions = res_positions[None].repeat(batch_size, 1, 1)
+    for part, segm in segmentations.items():
+        mask = segm["mask"] == 1
+        transformed_res_positions[:, mask] = rotate_residues_einops(
+            res_positions[mask], quaternions[part], segm["segmentation"], device)
+
+    res_displacement = transformed_res_positions - res_positions[None]
+    atom_displacement = res_displacement[:, expansion_map]
+    translation_atoms = translation_per_residue[:, expansion_map]
+    new_atom_positions = atom_positions[None] + atom_displacement + translation_atoms
+
     return new_atom_positions
 
 

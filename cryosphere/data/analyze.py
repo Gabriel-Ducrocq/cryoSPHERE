@@ -3,6 +3,7 @@ import os
 from os.path import dirname, join, abspath
 sys.path.insert(0, abspath(join(dirname(__file__), '..')))
 import torch
+import copy
 from cryosphere.model import utils
 import argparse
 import starfile
@@ -15,12 +16,14 @@ import torch.multiprocessing as mp
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import destroy_process_group
+import torch.distributed as dist
 from cryosphere.model.polymer import Polymer
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from torch.utils.data import DataLoader
 from scipy.spatial.distance import cdist
-
+from biotite.structure.io.pdb import PDBFile
+import biotite.structure as struc
 
 parser_arg = argparse.ArgumentParser()
 parser_arg.add_argument('--experiment_yaml', type=str, required=True, help="path to the yaml defining the experimentation")
@@ -34,7 +37,7 @@ parser_arg.add_argument("--num_points", type=int, required=False, default= 20, h
 parser_arg.add_argument('--dimensions','--list', nargs='+', type=int, default= [0, 1, 2], help='<Required> PC dimensions along which we compute the trajectories. If not set, use pc 1, 2, 3', required=False)
 parser_arg.add_argument('--generate_structures', action=argparse.BooleanOptionalAction, default= False, help="""If False: run a PCA analysis with PCA traversal. If True,
                             generates the structures corresponding to the latent variables given in z.""")
-
+parser_arg.add_argument('--all_atom', action=argparse.BooleanOptionalAction, default=False, help="""If True generate all atom models. If False only C-alpha models.""")
 
 
 class LatentDataSet(Dataset):
@@ -231,6 +234,26 @@ def predict_structures(vae, z_dim, gmm_repr, segmenter, device):
     return predicted_structures
 
 
+def predict_structures_aa(vae, z_dim, gmm_repr, atom_pos, expansion_mask, segmenter, device):
+    """
+    Function predicting the all atom structures for a PC traversal along a specific PC.
+    :param vae: object of class VAE.
+    :param z_dim: np.array(num_points, latent_dim) coordinates of the sampled structures for the PC traversal
+    :param gmm_repr: Gaussian representation. Object of class Gaussian.
+    :param atom_pos: atom positions.
+    :param expansion_mask: masking all atoms on the corresponding residues.
+    :param predicted_structures: torch.tensor(num_points, N_residues, 3), predicted structutres for each one of the sampled points of the PC traversal.
+    :param segmenter: object of class Segmentation
+    :param device: torch device
+    """
+    z_dim = torch.tensor(z_dim, dtype=torch.float32, device=device)
+    segmentation = segmenter.sample_segments(z_dim.shape[0])
+    quaternions_per_domain, translations_per_domain = vae.decode(z_dim)
+    translation_per_residue = utils.compute_translations_per_residue(translations_per_domain, segmentation, gmm_repr.mus.shape[0],z_dim.shape[0], device)
+    predicted_structures = utils.deform_structure_aa(atom_pos, gmm_repr.mus, expansion_mask, translation_per_residue, quaternions_per_domain, segmentation, device)
+    return predicted_structures
+
+
 def save_structure(base_structure, path):
     """
     Save one structure in a PDB file, saved at path
@@ -253,6 +276,22 @@ def save_structures_pca(predicted_structures, dim, output_path, base_structure):
         base_structure.coord = pred_struct.detach().cpu().numpy()
         save_structure(base_structure, os.path.join(output_path, f"pc{dim}/structure_z_{i}.pdb"))
 
+def save_structures_pca_aa(predicted_structures, dim, output_path, base_structure):
+    """
+    Save a set of all atom structures given in a torch tensor in different pdb files.
+    :param predicted_structures: torch.tensor(N_predicted_structures, N_residues, 3), set of structures
+    :param dim: integer, dimension along which we sample
+    :param output_path: str, path to the directory in which we save the structures.
+    :param base_structrue: object of class Polymer
+    """
+    for i, pred_struct in enumerate(predicted_structures):
+        print("Saving structure", i+1, "from pc", dim)
+        base_structure.coord = pred_struct[None, :, :].detach().cpu().numpy()
+        file = PDBFile()
+        file.set_structure(base_structure)
+        file.write(os.path.join(output_path, f"pc{dim}/structure_z_{i}.pdb"))
+
+
 def save_structures(predicted_structures, base_structure, batch_num, output_path, batch_size, indexes):
     """
     Save structures in batch, with the correct numbering .
@@ -265,6 +304,30 @@ def save_structures(predicted_structures, base_structure, batch_num, output_path
         print("Saving structure", batch_num*batch_size + i)
         base_structure.coord = pred_struct.detach().cpu().numpy()
         base_structure.to_pdb(os.path.join(output_path, f"structure_z_{indexes[i]}.pdb"))
+
+def save_structures_aa(predicted_structures, base_structure, batch_num, output_path, batch_size, indexes):
+    """
+    Save all atom structures in batch, with the correct numbering .
+    :param predicted_structures: torch.tensor(N_batch, N_residues, 3) of predicted structures
+    :param base_structure: object of class Polymer.
+    :param batch_num: integer, batch number
+    :param output_path: str, path where we want to save the structures
+    """
+    for i, pred_struct in enumerate(predicted_structures):
+        print("Saving structure", indexes[i])
+        structure = copy.deepcopy(base_structure)
+        structure.coord = pred_struct[None, :, :].detach().cpu().numpy()
+    #    atom_array = base_structure.atom_array.copy()
+    #    atom_array.coord = pred_struct.detach().cpu().numpy()
+        file = PDBFile()
+        file.set_structure(structure)
+        file.write(os.path.join(output_path, f"structure_z_{indexes[i]}.pdb"))
+
+    #for i, pred_struct in enumerate(predicted_structures):
+    #    print("Saving structure", indexes[i])
+    #    base_structure.coord = pred_struct[None, :, :].detach().cpu().numpy()
+    #    base_structure.to_pdb(os.path.join(output_path, f"structure_z_{indexes[i]}.pdb"))
+
 
 def run_pca_analysis(vae, z, dimensions, num_points, output_path, gmm_repr, base_structure, thinning, segmenter, device):
     """
@@ -294,9 +357,38 @@ def run_pca_analysis(vae, z, dimensions, num_points, output_path, gmm_repr, base
             save_structures_pca(predicted_structures, 0, output_path, base_structure)
 
 
+def run_pca_analysis_aa(vae, z, dimensions, num_points, output_path, gmm_repr, base_structure, atom_pos, expansion_mask, thinning, segmenter, device):
+    """
+    Runs a PCA analysis of the latent space and return PC traversals and plots of the PCA of the latent space
+    :param vae: object of class VAE.
+    :param z: torch.tensor(N_latent, latent_dim) containing all the latent variables
+    :param dimensions: list of integer, list of PC dimensions we want to traverse
+    :param num_points: integer, number of points to sample along a PC for the PC traversals
+    :param output_path: str, path to the directory where we want to save the PCA resuls
+    :param gmm_repr: object of class Gaussian.
+    :param base_structure: object of class Polymer.
+    :param segmenter: object of class segmenter.
+    :param device: torch device on which we perform the computations
+    """
+    if z.shape[-1] > 1:
+        all_trajectories, all_trajectories_pca, z_pca, pca = compute_traversals(z[::thinning], dimensions=dimensions, num_points=num_points)
+        sns.set_style("white")
+        for dim in dimensions:
+            plot_pca(output_path, dim, all_trajectories_pca, z_pca, pca)
+            predicted_structures = predict_structures_aa(vae, all_trajectories[dim], gmm_repr, atom_pos, expansion_mask, segmenter, device)
+            save_structures_pca_aa(predicted_structures, dim, output_path, base_structure)
+
+    else:
+            os.makedirs(os.path.join(output_path, f"pc0/"), exist_ok=True)
+            all_trajectories = graph_traversal(z, 0, num_points=num_points)
+            z_dim = torch.tensor(all_trajectories, dtype=torch.float32, device=device)
+            predicted_structures = predicted_structures_aa(all_trajectories)
+            save_structures_pca_aa(predicted_structures, 0, output_path, base_structure)
+
+
 def generate_structures_wrapper(rank, world_size, z, base_structure, path_structures, batch_size, gmm_repr, yaml_setting_path, model_path, segmenter_path):
     """
-    Wrapper function to decode the latent variable in parallel
+    Wrapper function to decode the latent variable in parallel (for all atom output)
     :param rank: integer, rank of the device
     :param world_size: integer, number of devices
     :param z: torch.tensor(N_latent, latent_dim) latent variable from which we want to output images.
@@ -314,23 +406,70 @@ def generate_structures_wrapper(rank, world_size, z, base_structure, path_struct
     generate_structures(rank, vae, segmenter, base_structure, path_structures, latent_variable_dataset, batch_size, gmm_repr)
     destroy_process_group()
 
+
+def generate_structures_wrapper_aa(rank, world_size, z, atom_pos, expansion_mask, base_structure, atom_arr_stack, path_structures, batch_size, gmm_repr, yaml_setting_path, model_path, segmenter_path):
+    """
+    Wrapper function to decode the latent variable in parallel (for all atom output)
+    :param rank: integer, rank of the device
+    :param world_size: integer, number of devices
+    :param z: torch.tensor(N_latent, latent_dim) latent variable from which we want to output images.
+    :param atom_pos: atom positions.
+    :param expansion_mask: masking all atoms to the corresponding residues.
+    :param atom_arr_stack: atom array stack of base structure.
+    :param segmenter_path: segmenter object.
+    """
+    utils.ddp_setup(rank, world_size)
+    (vae, image_translator, ctf_experiment, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings, device,
+    scheduler, base_structure, lp_mask2d, mask, amortized, path_results, structural_loss_parameters, segmenter)  = utils.parse_yaml(yaml_setting_path, rank, analyze=True)
+    vae.load_state_dict(torch.load(model_path))
+    vae.eval()
+    segmenter.load_state_dict(torch.load(segmenter_path))
+    segmenter.eval()
+    latent_variable_dataset = LatentDataSet(z)
+    generate_structures_aa(rank, vae, atom_pos, expansion_mask, segmenter, atom_arr_stack, path_structures, latent_variable_dataset, batch_size, gmm_repr)
+    destroy_process_group()
+
+
+
 def generate_structures(rank, vae, segmenter, base_structure, path_structures, latent_variable_dataset, batch_size, gmm_repr):
     vae = DDP(vae, device_ids=[rank])
     segmenter = DDP(segmenter, device_ids=[rank])
+    rank = dist.get_rank() if dist.is_initialized() else 0
     latent_variables_loader = iter(DataLoader(latent_variable_dataset, shuffle=False, batch_size=batch_size, num_workers=4, drop_last=False, sampler=DistributedSampler(latent_variable_dataset, shuffle=False)))
     for batch_num, (indexes, z) in enumerate(latent_variables_loader): 
         z = z.to(rank)
         predicted_structures = predict_structures(vae.module, z, gmm_repr, segmenter.module, rank)
-        save_structures(predicted_structures, base_structure, batch_num, path_structures, batch_size, indexes)
+        
+        local_structures = [s.detach().cpu() for s in predicted_structures]
+        local_indexes = indexes.cpu().tolist()
+        gathered_structures = [None for _ in range(dist.get_world_size())]
+        gathered_indexes = [None for _ in range(dist.get_world_size())]
+        dist.all_gather_object(gathered_structures, local_structures)
+        dist.all_gather_object(gathered_indexes, local_indexes)
+        
+        if rank == 0:
+            save_structures(predicted_structures, base_structure, batch_num, path_structures, batch_size, indexes)
 
 
-def analyze(yaml_setting_path, model_path, segmenter_path, output_path, z, thinning=1, dimensions=[0, 1, 2], num_points=10, generate_structures=False):
+def generate_structures_aa(rank, vae, atom_pos, expansion_mask, segmenter, atom_arr_stack, path_structures, latent_variable_dataset, batch_size, gmm_repr):
+    vae = DDP(vae, device_ids=[rank])
+    segmenter = DDP(segmenter, device_ids=[rank])
+    rank = dist.get_rank() if dist.is_initialized() else 0
+    latent_variables_loader = iter(DataLoader(latent_variable_dataset, shuffle=False, batch_size=batch_size, num_workers=4, drop_last=False, sampler=DistributedSampler(latent_variable_dataset, shuffle=False)))
+    for batch_num, (indexes, z) in enumerate(latent_variables_loader):
+        z = z.to(rank)
+        predicted_structures = predict_structures_aa(vae.module, z, gmm_repr, atom_pos, expansion_mask, segmenter.module, rank)
+        assert len(predicted_structures) == len(indexes)
+        if rank == 0:
+            save_structures_aa(predicted_structures, atom_arr_stack, batch_num, path_structures, batch_size, indexes)
+
+
+def analyze(yaml_setting_path, model_path, segmenter_path, output_path, z, thinning=1, dimensions=[0, 1, 2], num_points=10, generate_structures=False, all_atom=False):
     """
     train a VAE network
     :param yaml_setting_path: str, path the yaml containing all the details of the experiment.
     :param model_path: str, path to the model we want to analyze.
     :param segmenter_path: str, path to the segmenter used for the analysis.
-    :param structures_path: 
     :return:
     """
     (vae, image_translator, ctf_experiment, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings, device,
@@ -348,17 +487,43 @@ def analyze(yaml_setting_path, model_path, segmenter_path, output_path, z, thinn
         latent_path = os.path.join(output_path, "z.npy")
         z = np.load(latent_path)
 
-    if not generate_structures:
-        run_pca_analysis(vae, z, dimensions, num_points, output_path, gmm_repr, base_structure, thinning, segmenter, device=device)
+    if all_atom:
+        all_number_of_atoms = []
+        f = PDBFile.read(experiment_settings["base_structure_path"])
+        atom_arr_stack = f.get_structure()
+        atom_arr_stack = atom_arr_stack[:, struc.filter_amino_acids(atom_arr_stack)]
+        base_coordinates = torch.tensor(atom_arr_stack.coord, dtype=torch.float32, device=device)
+        for chain_id in np.unique(atom_arr_stack.chain_id):
+            chain = atom_arr_stack[:, atom_arr_stack.chain_id == chain_id]
+            for res_id in np.unique(chain.res_id):
+                n_atoms = chain[:, chain.res_id == res_id].shape[1]
+                all_number_of_atoms.append(n_atoms)
+        
+        expansion_mask = [i for i, n_atoms in enumerate(all_number_of_atoms) for _ in range(n_atoms)]
+        if not generate_structures:
+            run_pca_analysis_aa(vae, z, dimensions, num_points, output_path, gmm_repr, atom_arr_stack, base_coordinates[0], expansion_mask, thinning, segmenter, device=device)
+
+        else:
+            path_structures = os.path.join(output_path, "predicted_structures")
+            if not os.path.exists(path_structures):
+                os.makedirs(path_structures)
+
+            z = torch.tensor(z, dtype=torch.float32)
+            latent_variable_dataset = LatentDataSet(z)
+            mp.spawn(generate_structures_wrapper_aa, args=(world_size, z, base_coordinates[0], expansion_mask, atom_arr_stack, atom_arr_stack, path_structures, batch_size, gmm_repr, yaml_setting_path, model_path, segmenter_path), nprocs=world_size)
 
     else:
-        path_structures = os.path.join(output_path, "predicted_structures")
-        if not os.path.exists(path_structures):
-            os.makedirs(path_structures)
+        if not generate_structures:
+            run_pca_analysis(vae, z, dimensions, num_points, output_path, gmm_repr, base_structure, thinning, segmenter, device=device)
 
-        z = torch.tensor(z, dtype=torch.float32)
-        latent_variable_dataset = LatentDataSet(z)
-        mp.spawn(generate_structures_wrapper, args=(world_size, z, base_structure, path_structures, batch_size, gmm_repr, yaml_setting_path, model_path, segmenter_path), nprocs=world_size)
+        else:
+            path_structures = os.path.join(output_path, "predicted_structures")
+            if not os.path.exists(path_structures):
+                os.makedirs(path_structures)
+
+            z = torch.tensor(z, dtype=torch.float32)
+            latent_variable_dataset = LatentDataSet(z)
+            mp.spawn(generate_structures_wrapper, args=(world_size, z, base_structure, path_structures, batch_size, gmm_repr, yaml_setting_path, model_path, segmenter_path), nprocs=world_size)
 
 
 def analyze_run():
@@ -375,7 +540,8 @@ def analyze_run():
         z = np.load(args.z)
         
     generate_structures = args.generate_structures
-    analyze(path, model_path, segmenter_path, output_path, z, dimensions=dimensions, generate_structures=generate_structures, thinning=thinning, num_points=num_points)
+    all_atom = args.all_atom
+    analyze(path, model_path, segmenter_path, output_path, z, dimensions=dimensions, generate_structures=generate_structures, thinning=thinning, num_points=num_points, all_atom=all_atom)
 
 
 if __name__ == '__main__':
