@@ -63,7 +63,7 @@ class VAE(torch.nn.Module):
         """
         N_batch = latent_variables.shape[0]
         transformations = self.decoder(latent_variables)
-        transformations_per_segments = torch.reshape(transformations, (N_batch, self.N_total_segments, 6))
+        transformations_per_segments = torch.reshape(transformations, (N_batch, self.N_total_segments, 9))
         r6_per_segments_all_parts = transformations_per_segments[:, :, 3:].reshape(N_batch, self.N_total_segments, 2, 3)
         translations_per_segments_all_parts = transformations_per_segments[:, :, :3]
         translations_per_segments = {}
