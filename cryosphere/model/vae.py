@@ -64,18 +64,18 @@ class VAE(torch.nn.Module):
         N_batch = latent_variables.shape[0]
         transformations = self.decoder(latent_variables)
         transformations_per_segments = torch.reshape(transformations, (N_batch, self.N_total_segments, 6))
-        r6_per_segments_all_parts = transformations_per_segments[:, :, 3:]
+        r6_per_segments_all_parts = transformations_per_segments[:, :, 3:].reshape(N_batch, self.N_total_segments, 2, 3)
         translations_per_segments_all_parts = transformations_per_segments[:, :, :3]
         translations_per_segments = {}
-        quaternions_per_segments = {}
+        r6_per_segments = {}
         start = 0
         for part, part_config in self.segmentation_config.items():
             n_segments = part_config["N_segm"]
             translations_per_segments[part] = translations_per_segments_all_parts[:, start:(start+n_segments), :]
-            quaternions_per_segments[part] = r6_per_segments_all_parts[:, start:(start+n_segments)]
+            r6_per_segments[part] = r6_per_segments_all_parts[:, start:(start+n_segments)]
             start += n_segments
 
-        return quaternions_per_segments, translations_per_segments
+        return r6_per_segments, translations_per_segments
 
 
 

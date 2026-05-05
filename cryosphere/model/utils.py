@@ -143,15 +143,11 @@ def set_wandb(experiment_settings):
             project=experiment_settings['wandb_project'],
             # We pass a run name (otherwise it’ll be randomly assigned, like sunshine-lollypop-10)
                 name=name,
-
-
+            
             # Track hyperparameters and run metadata
-            config={
-                "learning_rate": experiment_settings["optimizer"]["learning_rate"],
-                "architecture": "VAE",
-                "dataset": experiment_settings["cs_star_file"],
-                "epochs": experiment_settings["N_epochs"],
-            })
+            config=experiment_settings)
+
+        wandb.save("parameters.yaml")
 
 
 def parse_yaml(path, gpu_id, analyze=False):
