@@ -21,14 +21,14 @@ def disable_encoder_gradient(vae):
     """
     Cancel the need for gradient on encoder
     """
-    for p in vae.encoder.parameters():
+    for p in vae.module.encoder.parameters():
         p.requires_grad = False
 
 def enable_encoder_gradient(vae):
     """
     Enable the need for gradient on encoder.
     """
-    for p in vae.encoder.parameters():
+    for p in vae.module.encoder.parameters():
         p.requires_grad = True
 
 def pretrain(vae, dataset, experiment_settings, gpu_id):
@@ -43,7 +43,7 @@ def pretrain(vae, dataset, experiment_settings, gpu_id):
     tracking_metrics = {"mse":[]}
     batch_size = experiment_settings["pretraining"]["batch_size"]
     disable_encoder_gradient(vae)
-    list_param = [{"params": vae.decoder.parameters(), "lr":experiment_settings["pretraining"]["optimizer"]["learning_rate"]}]
+    list_param = [{"params": vae.module.decoder.parameters(), "lr":experiment_settings["pretraining"]["optimizer"]["learning_rate"]}]
     optimizer = torch.optim.Adam(list_param)
     for epoch in range(experiment_settings["pretraining"]["N_epochs"]):
         data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False,

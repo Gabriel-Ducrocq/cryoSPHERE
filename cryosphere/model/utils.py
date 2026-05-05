@@ -22,14 +22,12 @@ from cryosphere.model.vae import VAE
 from cryosphere.model.mlp import MLP
 from cryosphere.model.ctf import CTF
 from biotite.structure.io.pdb import PDBFile
-#from pytorch3d.transforms import Transform3d
 from cryosphere.model.polymer import Polymer
 from torch.distributed import init_process_group
 from cryosphere.model.dataset import ImageDataSet
 from cryosphere.model.gmm import Gaussian, EMAN2Grid
 from cryosphere.model.segmentation import Segmentation
-#from pytorch3d.transforms import quaternion_to_axis_angle, axis_angle_to_matrix, axis_angle_to_quaternion, quaternion_apply
-from cryosphere.model.loss import compute_loss, find_range_cutoff_pairs, remove_duplicate_pairs, find_continuous_pairs, calc_dist_by_pair_indices
+from cryosphere.model.loss import find_range_cutoff_pairs, remove_duplicate_pairs, find_continuous_pairs, calc_dist_by_pair_indices
 import roma
 from roma import unitquat_to_rotvec, rotvec_to_rotmat, rotvec_to_unitquat, rotmat_to_rotvec, rotmat_to_unitquat
 
