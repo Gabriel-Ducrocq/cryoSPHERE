@@ -12,8 +12,6 @@ import mrcfile
 import warnings
 import starfile
 import numpy as np
-from mmcv.cnn.utils.flops_counter import batch_counter_hook
-
 file_dir = os.path.dirname(__file__)
 sys.path.append(file_dir)
 import pandas as pd
@@ -143,7 +141,7 @@ def set_wandb(experiment_settings):
             project=experiment_settings['wandb_project'],
             # We pass a run name (otherwise it’ll be randomly assigned, like sunshine-lollypop-10)
                 name=name,
-            
+
             # Track hyperparameters and run metadata
             config=experiment_settings)
 
