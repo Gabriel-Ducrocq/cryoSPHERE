@@ -508,6 +508,7 @@ def rotate_residues_einops(atom_positions, quaternions, segmentation, device):
 
     return atom_positions
 
+
 def compute_translations_per_residue(translation_vectors, segmentations, N_residues, batch_size, device):
     """
     Computes one translation vector per residue based on the segmentation
