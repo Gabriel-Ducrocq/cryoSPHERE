@@ -61,8 +61,8 @@ def pretrain(vae, dataset, experiment_settings, gpu_id):
             loss = torch.zeros(1)
             for part, predicted_r6 in r6_per_domain.items():
                 r6_identity = torch.zeros_like(r6_per_domain[part], device=gpu_id)
-                r6_per_domain[:, :, 0, 0] = 1
-                r6_per_domain[:, :, 1, 1] = 1
+                r6_identity[:, :, 0, 0] = 1
+                r6_identity[:, :, 1, 1] = 1
                 loss += torch.mean(torch.sum((r6_identity - r6_per_domain[part])**2, dim=-1))
 
                 loss.backward()
