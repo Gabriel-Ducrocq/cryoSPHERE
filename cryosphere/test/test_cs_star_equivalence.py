@@ -21,7 +21,6 @@ class TestCsStarEquivalenceDataset(unittest.TestCase):
 	def setUp(self):
 		self.star_config = {"file": "test_apoferritin/particles/particles.star"}
 		self.cs_file = {"file": "test_apoferritin/J25_split_0_exported.cs"}
-		print(ImageDataSet.__init__.__code__.co_varnames)
 		self.cs_dataset = ImageDataSet(apix=1.428, side_shape=256, star_cs_file_config=self.cs_file,particles_path="test_apoferritin")
 		self.star_dataset = ImageDataSet(apix=1.428, side_shape=256, star_cs_file_config=self.star_config,particles_path="test_apoferritin/particles/")
 
@@ -94,7 +93,6 @@ class TestCsStarEquivalenceCTF(unittest.TestCase):
 	def test_dfang(self):
 		diff = np.max(torch.abs((self.ctf_cs.dfang - self.ctf_star.dfang)/self.ctf_star.dfang).detach().cpu().numpy())
 		argm = np.argmax(np.max(torch.abs(self.ctf_cs.dfang - self.ctf_star.dfang).detach().cpu().numpy()))
-		print("ARG MAX:", argm)
 		self.assertAlmostEqual(diff, 0.0, 4)
 
 	def test_volt(self):
@@ -119,9 +117,6 @@ class TestCsStarEquivalenceCTF(unittest.TestCase):
 
 	def test_bfactor(self):
 		diff = np.max(torch.abs((self.ctf_cs.bfactor - self.ctf_star.bfactor)).detach().cpu().numpy())
-		print(self.ctf_cs.bfactor)
-		print("\n")
-		print(self.ctf_star.bfactor)
 		self.assertAlmostEqual(diff, 0.0, 5)
 
 
@@ -131,7 +126,6 @@ class TestYamlParsing(unittest.TestCase):
 	This class tests whether we still parse the yaml successfully or not, with the cryosparc support. 
 	"""
 	def test_parse_yaml(self):
-		print(inspect.getmembers(CTF, predicate=inspect.ismethod))
 		try:
 			parse_yaml("test_apoferritin/parameters_package_segmentation.yaml")
 			self.assertEqual(0.0, 0.0)

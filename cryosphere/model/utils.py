@@ -12,6 +12,8 @@ import mrcfile
 import warnings
 import starfile
 import numpy as np
+from mmcv.cnn.utils.flops_counter import batch_counter_hook
+
 file_dir = os.path.dirname(__file__)
 sys.path.append(file_dir)
 import pandas as pd
@@ -31,8 +33,7 @@ from cryosphere.model.segmentation import Segmentation
 #from pytorch3d.transforms import quaternion_to_axis_angle, axis_angle_to_matrix, axis_angle_to_quaternion, quaternion_apply
 from cryosphere.model.loss import compute_loss, find_range_cutoff_pairs, remove_duplicate_pairs, find_continuous_pairs, calc_dist_by_pair_indices
 import roma
-from roma import unitquat_to_rotvec, rotvec_to_rotmat, rotvec_to_unitquat
-
+from roma import unitquat_to_rotvec, rotvec_to_rotmat, rotvec_to_unitquat, rotmat_to_rotvec, rotmat_to_unitquat
 
 
 def ddp_setup(rank: int, world_size: int):
@@ -227,7 +228,7 @@ def parse_yaml(path, gpu_id, analyze=False):
     for part, part_config in experiment_settings["segmentation_config"].items():
         n_total_segments += part_config["N_segm"]
 
-    decoder = MLP(experiment_settings["latent_dimension"], n_total_segments*6,
+    decoder = MLP(experiment_settings["latent_dimension"], n_total_segments*9,
                   experiment_settings["decoder"]["hidden_dimensions"], network_type="decoder", device=device)
 
 
@@ -479,7 +480,7 @@ def compute_rotations_per_residue_einops(quaternions, segmentation, device):
     return overall_rotation_matrices
 
 
-def rotate_residues_einops(atom_positions, quaternions, segmentation, device):
+def rotate_residues_einops(atom_positions, quaternions, segmentation):
     """
     Rotates each residues based on the rotation predicted for each domain and the predicted segmentation.
     :param positions: torch.tensor(N_residues, 3)
@@ -488,8 +489,6 @@ def rotate_residues_einops(atom_positions, quaternions, segmentation, device):
     :return: tensor (N_batch, N_residues, 3, 3) rotation matrix for each residue
     """
 
-    N_residues = segmentation.shape[1]
-    batch_size = quaternions.shape[0]
     N_segments = segmentation.shape[-1]
     # NOTE: no need to normalize the quaternions, quaternion_to_axis does it already.
     rotation_per_segments_axis_angle = unitquat_to_rotvec(quaternions[:, :, [1, 2, 3, 0]])
@@ -500,13 +499,36 @@ def rotate_residues_einops(atom_positions, quaternions, segmentation, device):
     #T = Transform3d(dtype=torch.float32, device = device)
     transform = roma.RotationUnitQuat(segmentation_rotation_per_segments_quaternions[:, :, 0, :])
     atom_positions = transform.apply(atom_positions[None, :, :])
-    #atom_positions = quaternion_apply(segmentation_rotation_per_segments_quaternions[:, :, 0, :], atom_positions)
     for segm in range(1, N_segments):
         transform = roma.RotationUnitQuat(segmentation_rotation_per_segments_quaternions[:, :, segm, :])
         atom_positions = transform.apply(atom_positions)
-        #atom_positions = quaternion_apply(segmentation_rotation_per_segments_quaternions[:, :, segm, :], atom_positions)
 
     return atom_positions
+
+
+def rotate_residues_einops_r6(atom_positions, r6_rotation, segmentation):
+    """
+    Computes the rotation matrix corresponding to each residue, for the part we want to tackle.
+    :param positions: torch.tensor(N_residues, 3)
+    :param r6_rotation: tensor (N_batch, N_segments, 3, 2) of r6 parametrized rotations, one per segment per sample
+    :param segmentation: tensor (N_batch, N_residues, N_segments)
+    :return: tensor (N_batch, N_residues, 3) rotation matrix for each residue
+    """
+    N_segments = segmentation.shape[-1]
+    rotation_matrices = roma.special_gramschmidt(r6_rotation)
+    rotation_per_segments_axis_angle = rotmat_to_rotvec(rotation_matrices)
+    #The below tensor is [N_batch, N_residues, N_segments, 3]
+    segmentation_rotation_per_segments_axis_angle = segmentation[:, :, :, None] * rotation_per_segments_axis_angle[:, None, :, :]
+    #The below tensor is [N_batch, N_residues, N_segments, 4] with the real part as the last element from now on !!!!!
+    segmentation_rotation_per_segments_rotmat = rotvec_to_rotmat(segmentation_rotation_per_segments_axis_angle)
+    transform = roma.Rotation(segmentation_rotation_per_segments_rotmat[:, :, 0, :])
+    atom_positions = transform.apply(atom_positions[None, :, :])
+    for segm in range(1, N_segments):
+        transform = roma.Rotation(segmentation_rotation_per_segments_rotmat[:, :, segm, :])
+        atom_positions = transform.apply(atom_positions)
+
+    return atom_positions
+
 
 
 def compute_translations_per_residue(translation_vectors, segmentations, N_residues, batch_size, device):
@@ -526,12 +548,12 @@ def compute_translations_per_residue(translation_vectors, segmentations, N_resid
 
     return translation_per_residue
 
-def deform_structure(atom_positions, translation_per_residue, quaternions, segmentations, device):
+def deform_structure(atom_positions, translation_per_residue, r6_rotations, segmentations, device):
     """
     Deform the base structure according to rotations and translation of each segment, together with the segmentation.
     :param atom_positions: torch.tensor(N_residues, 3)
     :param translation_per_residue: tensor (Batch_size, N_residues, 3)
-    :param quaternions: tensor (N_batch, N_segments, 4) of quaternions for the rotation of the segments
+    :param r6_rotations: tensor (N_batch, N_segments, 6) of r6 vectors for the rotation of the segments
     :param segmentations: dictionnary of torch.tensor(N_batch, N_residues, N_segments) representing the weights of the segmentation 
                           and mask to find the relevant residues among the protein.
     :param device: torch device on which the computation takes place
@@ -540,7 +562,7 @@ def deform_structure(atom_positions, translation_per_residue, quaternions, segme
     batch_size = translation_per_residue.shape[0]
     transformed_atom_positions = atom_positions[None, :, :].repeat((batch_size, 1, 1))
     for part, segm in segmentations.items():
-        transformed_atom_positions[:, segm["mask"]==1]  = rotate_residues_einops(atom_positions[segm["mask"]==1] , quaternions[part], segm["segmentation"], device)
+        transformed_atom_positions[:, segm["mask"]==1]  = rotate_residues_einops_r6(atom_positions[segm["mask"]==1] , r6_rotations[part], segm["segmentation"])
 
     new_atom_positions = transformed_atom_positions + translation_per_residue
     return new_atom_positions

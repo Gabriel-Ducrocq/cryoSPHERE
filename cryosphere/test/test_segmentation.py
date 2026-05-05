@@ -222,11 +222,9 @@ class TestMovingResidues(unittest.TestCase):
 	def test_old_new_rotations(self):
 		segmentation = self.segmenter2.sample_segments(self.batch_size)
 		translations_per_residue = compute_translations_per_residue(self.translation_per_segments2, segmentation, self.N_residues, self.batch_size, self.device)
-		print(self.atom_positions.shape)
 		new_atom_positions = deform_structure(self.atom_positions, translations_per_residue, self.rotation_per_segments2, segmentation, self.device)
 
 		translations_per_residue_old = compute_translations_per_residue_old(self.translation_per_segments2["part1"], segmentation["part1"]["segmentation"])
-		print(self.atom_positions.shape)
 		new_atom_positions_old = deform_structure_old(self.atom_positions, translations_per_residue_old, self.rotation_per_segments2["part1"], segmentation["part1"]["segmentation"], self.device)
 
 		diff = np.max(torch.abs(new_atom_positions - new_atom_positions_old).detach().cpu().numpy())
