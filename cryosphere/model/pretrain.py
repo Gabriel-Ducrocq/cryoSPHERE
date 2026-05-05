@@ -65,10 +65,9 @@ def pretrain(vae, dataset, experiment_settings, gpu_id):
                 r6_identity[:, :, 1, 1] = 1
                 loss += torch.mean(torch.sum((r6_identity - r6_per_domain[part])**2, dim=-1))
 
-                loss.backward()
-                optimizer.step()
-                optimizer.zero_grad()
-
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
             all_losses.append(loss.detach().cpu().numpy())
 
 
