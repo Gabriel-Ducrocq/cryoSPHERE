@@ -58,7 +58,7 @@ def pretrain(vae, dataset, experiment_settings, gpu_id):
             latent_variables, latent_mean, latent_std = vae.module.sample_latent(flattened_batch_images)
 
             r6_per_domain, translations_per_domain = vae.module.decode(latent_variables)
-            loss = torch.zeros(1)
+            loss = torch.zeros(1, device=gpu_id)
             for part, predicted_r6 in r6_per_domain.items():
                 r6_identity = torch.zeros_like(r6_per_domain[part], device=gpu_id)
                 r6_identity[:, :, 0, 0] = 1
