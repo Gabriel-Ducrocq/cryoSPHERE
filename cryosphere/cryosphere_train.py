@@ -42,7 +42,9 @@ def start_training(vae, image_translator, ctf, grid, gmm_repr, optimizer, datase
     base_structure, lp_mask2d, mask_images, amortized, path_results, structural_loss_parameters, segmenter, gpu_id):
     vae = DDP(vae, device_ids=[gpu_id])
     segmenter = DDP(segmenter, device_ids=[gpu_id])
-    pretrain(vae, dataset, experiment_settings, gpu_id)
+    if experiment_settings["resume_training"]["model"] is not None:
+        pretrain(vae, dataset, experiment_settings, gpu_id)
+
     for epoch in range(N_epochs):
         tracking_metrics = {"wandb":experiment_settings["wandb"], "epoch": epoch, "path_results":path_results ,"correlation_loss":[], "kl_prior_latent":[], 
                             "kl_prior_segmentation_mean":[], "kl_prior_segmentation_std":[], "kl_prior_segmentation_proportions":[], "l2_pen":[], "continuity_loss":[], 
