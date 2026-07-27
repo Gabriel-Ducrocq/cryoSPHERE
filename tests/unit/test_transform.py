@@ -1,6 +1,6 @@
 import roma
 import torch
-from cryosphere.geometry.transform import apply_rotation, apply_translation
+from src.cryosphere.geometry.transform import apply_rotation, apply_translation
 
 
 class TestApplyRotation():

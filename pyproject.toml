@@ -80,6 +80,8 @@ dependencies = ['numpy',
 		'roma']
 
 
+[tool.setuptools.packages.find]
+include = ["cryosphere*"]
 
 [project.scripts]
 cryosphere_train = "cryosphere.cryosphere_train:cryosphere_train"
