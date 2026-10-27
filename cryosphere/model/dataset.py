@@ -7,7 +7,7 @@ from time import time
 from torch.utils.data import Dataset
 import torchvision.transforms.functional as tvf
 #from pytorch3d.transforms import euler_angles_to_matrix, axis_angle_to_matrix
-from roma import rotvec_to_rotmat, euler_to_rotmat
+from roma import rotvec_to_rotmat, euler_to_rotmat, rotmat_to_rotvec, unitquat_to_rotmat
 
 
 
@@ -95,18 +95,20 @@ def cs_file_reader(cs_file_path, apix, abinit, hetrefine):
 
 
 class ImageDataSet(Dataset):
-    def __init__(self, apix, side_shape, star_cs_file_config, particles_path, down_side_shape=None, down_method="interp", rad_mask=None):
+    def __init__(self, apix, side_shape, star_cs_file_config, particles_path, down_side_shape=None, down_method="interp",
+                 rad_mask=None, refine_poses = False):
         """
-        Create a dataset of images and poses
+        Create a dataset of images and poses.
         :param apix: float, size of a pixel in Å.
-        :param side_shape: integer, number of pixels on each side of a picture. So the picture is a side_shape x side_shape array
-        :param particle_df: particles dataframe coming from a star file
+        :param side_shape: integer, number of pixels on each side of a picture. So the picture is a side_shape x side_shape array.
+        :param particle_df: particles dataframe coming from a star file.
         :particles_path: string, path to the folder containing the mrcs files. It is appended to the path present in the star file.
         :param down_side_shape: integer, number of pixels of the downsampled images. If no downampling, set down_side_shape = side_shape. 
         :param down_method: str, downsampling method to use if down_side_shape < side_shape. Currently only interp is supported.
         :param rad_mask: float, radius of the mask used on the input image. If None, no mask is used.
+        :param refine_poses: bool, whether we refine the poses or not.
         """
-
+        self.refine_poses = refine_poses
         self.side_shape = side_shape
         self.down_method = down_method
         self.apix = apix
@@ -119,6 +121,7 @@ class ImageDataSet(Dataset):
         assert self.pose_file_extension in ["cs", "star"], "Pose file must be a starfile or a cs file."
         if self.pose_file_extension == "star":
             self.poses, self.poses_translation = starfile_reader(star_cs_file_config["file"], self.apix)
+            self.poses_quat = rotmat_to_rotvec(self.poses)
             self.particles_df = starfile.read(star_cs_file_config["file"])
             if type(self.particles_df) is dict and "particles" in self.particles_df:
                 self.particles_df = self.particles_df["particles"]
@@ -141,6 +144,15 @@ class ImageDataSet(Dataset):
         self.f_std = None
         self.f_mu = None
         self.estimate_normalization()
+
+    def update_poses_quaternions(self, indexes: torch.Tensor, new_quats: torch.Tensor, epsilon=1e-8) -> None:
+        """
+        Normalizes and updates the stored quaternions (axis-angle representation).
+        :param indexes: IntTensor of shape (batch_size, ), indexes of the batch samples we want to update.
+        :param new_quats: FloatTensor (batch_size, 3), quaternions to update.
+        """
+        new_quats /= (new_quats.norm(dim=-1) + 1e-8)
+        self.poses_quat[indexes, :] = new_quats
 
     def estimate_normalization(self):
         if self.f_mu is None and self.f_std is None:
@@ -214,7 +226,10 @@ class ImageDataSet(Dataset):
             fproj = (fproj - self.f_mu) / self.f_std
             proj = fourier_to_primal_2d(fproj).real
 
-        return idx, proj, self.poses[idx], self.poses_translation[idx]/self.down_apix, fproj
+        if self.refine_poses:
+            return idx, proj, self.poses[idx], self.poses_translation[idx]/self.down_apix, fproj
+        else:
+            return idx, proj, unitquat_to_rotmat(self.poses_quat[idx]), self.poses_translation[idx]/self.down_apix, fproj
 
 
 
