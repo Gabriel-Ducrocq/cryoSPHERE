@@ -160,7 +160,7 @@ class ImageDataSet(Dataset):
             f_sub_data = []
             # I have checked that the standard deviation of 10/100/1000 particles is similar
             for i in range(0, len(self), len(self) // 100):
-                _, _, _, _, fproj = self[i]
+                _, _, _, _, _, fproj = self[i]
                 f_sub_data.append(fproj)
 
             f_sub_data = torch.cat(f_sub_data, dim=0)
@@ -227,7 +227,7 @@ class ImageDataSet(Dataset):
             fproj = (fproj - self.f_mu) / self.f_std
             proj = fourier_to_primal_2d(fproj).real
 
-        return idx, proj, self.poses[idx], unitquat_to_rotmat(self.poses_quat[idx]), self.poses[idx], self.poses_translation[idx]/self.down_apix, fproj
+        return idx, proj, self.poses_quat[idx], self.poses[idx], self.poses_translation[idx]/self.down_apix, fproj
 
 
 

@@ -35,16 +35,15 @@ from roma import unitquat_to_rotvec, rotvec_to_rotmat, rotvec_to_unitquat
 
 
 
-def ddp_setup(rank: int, world_size: int):
-   """
-   Args:
-       rank: Unique identifier of each process
-      world_size: Total number of processes
-   """
-   os.environ["MASTER_ADDR"] = "localhost"
-   os.environ["MASTER_PORT"] = "12355"
-   torch.cuda.set_device(rank)
-   init_process_group(backend="nccl", rank=rank, world_size=world_size)
+
+def ddp_setup(rank, world_size):
+    os.environ.setdefault("MASTER_ADDR", "localhost")
+    os.environ.setdefault("MASTER_PORT", "12355")
+    if torch.cuda.is_available():
+        torch.cuda.set_device(rank)
+        init_process_group(backend="nccl", rank=rank, world_size=world_size)
+    else:
+        init_process_group(backend="gloo", rank=rank, world_size=world_size)
 
 
 def primal_to_fourier2d(images):

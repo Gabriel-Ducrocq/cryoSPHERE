@@ -1,13 +1,13 @@
 name: "cryoSPHERE_run" #Name of the experiment. Especially useful for using weight and biases.
 wandb: True #Whether to log the training metrics into weight and biases. Note that it is not mandatory to use wand.
 wandb_project: "VAECryoEM" #Name of the weight and biases project into which we log the training metrics.
-folder_path: "path/to/folder" #path to the folder containing the star file, mrcs files and the base_structure.pdb
+folder_path: "path/to" #path to the folder containing the star file, mrcs files and the base_structure.pdb
 base_structure_path: "base_structure.pdb" #Name of the pdb file of the base structure.
 image_yaml: "images.yaml" #Name of the yaml file containing the parameters realted to the images.
 particles_path: "/path/to/particles" # path to the folder containing the mrcs files. Note that this will be appended to the paths in the star file.
 cs_star_file:
         file: "path/to/star_or_cs_file" #Path to the star or cryosparc file of the experiment.
-	abinit: True #Whether or not the dataset has been obtained through ab-initio reconstruction. Only needed when reading data preprocessed by cryoSparc. If not specified, it is set as False. You may want to change this value.
+        abinit: True #Whether or not the dataset has been obtained through ab-initio reconstruction. Only needed when reading data preprocessed by cryoSparc. If not specified, it is set as False. You may want to change this value.
         hetrefine: True #Whether or not the dataset has been obtained through heterogeneous refinement. Only needed when reading data preprocessed by cryoSparc. If not specified, it is set to False. You may want to change this value.
 segmentation_config: #Definition of the segmentation
         part1:  #This is a first segmentation, located on chain A, going from residue 0 to residue 502.
@@ -15,26 +15,26 @@ segmentation_config: #Definition of the segmentation
                 end_res: 502 #Ending residue in the local segmentation. start_res and end_res are included in the segmentation
                 chain: "A" # Chain that we segment.
                 N_segm: 3 #Number of segments for segmenting residues 0 to 502 of chain A
-		segmentation_start_values: #This tab is used for customizing the starting values of the segmentation. If not present, the default start segmentation is uniform.
-			means_means: [100, 250, 500]
-			means_stds: [10, 10, 10]
-			stds_means: [15, 5, 20]
-			stds_stds: [2, 40, 10]
-			proportions_means: [0, 0, 0]
-			proportions_stds: [1, 1, 1]
-		segmentation_prior: #This tab is used for customizing the priors on the segmentation values. If not present, the default prior uses uniform values over the segmentation.
-			means_means: [90, 120, 471]
+                segmentation_start_values: #This tab is used for customizing the starting values of the segmentation. If not present, the default start segmentation is uniform.
+                        means_means: [100, 250, 500]
+                        means_stds: [10, 10, 10]
+                        stds_means: [15, 5, 20]
+                        stds_stds: [2, 40, 10]
+                        proportions_means: [0, 0, 0]
+                        proportions_stds: [1, 1, 1]
+                segmentation_prior: #This tab is used for customizing the priors on the segmentation values. If not present, the default prior uses uniform values over the segmentation.
+                        means_means: [90, 120, 471]
                         means_stds: [1, 20, 8]
                         stds_means: [10, 11, 17]
                         stds_stds: [3, 20, 13]
                         proportions_means: [1, 4, 0]
                         proportions_stds: [4, 1, 10]
-	part2: #This is a second segmentation, located on chain C, going from residue 10 to 350
-		start_res: 10
-		end_res: 350
-		chain: "C"
-		N_segm: 4
-lp_bandwidth:   #Bandwith at which we low pass filter the images: all frequencies > 1/lp_bandwidth are set to 0. 
+        part2: #This is a second segmentation, located on chain C, going from residue 10 to 350
+                start_res: 10
+                end_res: 350
+                chain: "C"
+                N_segm: 4
+lp_bandwidth: 7.9   #Bandwith at which we low pass filter the images: all frequencies > 1/lp_bandwidth are set to 0. 
 loss_mask_radius: 1 #Radius of the circular mask used to compute the correlation loss, in percentage of half of the side length: 1 mean the circular mask streches to the edges of the image. Remove if not used. 
 input_mask_radius: 1 #Radius of the circular mask used on the images before feeding them to the encoder. Defined the same as loss_mask_radius. Remove if not used.
 latent_dimension: 8 #Dimension of the latent space. Default work well.
@@ -82,6 +82,4 @@ loss:
     beta: 0.000001   #Same as above
 resume_training: 
   model: null #If null, training the neural network is initialized. If set to the path to a .pt file of a previous model, resumes training of this model.
-  segmentation: null #If null, the segmentation is initialized. If set to the pa
-th of the .pt file of a previous segmentation, resumes the training of this segm
-entation.
+  segmentation: null #If null, the segmentation is initialized. If set to the path of the .pt file of a previous segmentation, resumes the training of this segmentation.
