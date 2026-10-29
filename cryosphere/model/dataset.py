@@ -7,8 +7,7 @@ from time import time
 from torch.utils.data import Dataset
 import torchvision.transforms.functional as tvf
 #from pytorch3d.transforms import euler_angles_to_matrix, axis_angle_to_matrix
-from roma import rotvec_to_rotmat, euler_to_rotmat, rotmat_to_rotvec, unitquat_to_rotmat
-
+from roma import rotvec_to_rotmat, euler_to_rotmat, rotmat_to_rotvec, unitquat_to_rotmat, rotmat_to_unitquat
 
 
 class Mask(torch.nn.Module):
@@ -121,13 +120,15 @@ class ImageDataSet(Dataset):
         assert self.pose_file_extension in ["cs", "star"], "Pose file must be a starfile or a cs file."
         if self.pose_file_extension == "star":
             self.poses, self.poses_translation = starfile_reader(star_cs_file_config["file"], self.apix)
-            self.poses_quat = rotmat_to_rotvec(self.poses)
+            self.poses_quat = rotmat_to_unitquat(self.poses)
             self.particles_df = starfile.read(star_cs_file_config["file"])
             if type(self.particles_df) is dict and "particles" in self.particles_df:
                 self.particles_df = self.particles_df["particles"]
         else:
             self.poses, self.poses_translation = cs_file_reader(star_cs_file_config["file"], self.apix, star_cs_file_config.get("abinit", False), 
                                                                 star_cs_file_config.get("hetrefine", False))
+
+            self.poses_quat = rotmat_to_unitquat(self.poses)
             self.particles_df = np.load(star_cs_file_config["file"])
 
 
@@ -226,10 +227,7 @@ class ImageDataSet(Dataset):
             fproj = (fproj - self.f_mu) / self.f_std
             proj = fourier_to_primal_2d(fproj).real
 
-        if self.refine_poses:
-            return idx, proj, self.poses[idx], self.poses_translation[idx]/self.down_apix, fproj
-        else:
-            return idx, proj, unitquat_to_rotmat(self.poses_quat[idx]), self.poses_translation[idx]/self.down_apix, fproj
+        return idx, proj, self.poses[idx], unitquat_to_rotmat(self.poses_quat[idx]), self.poses[idx], self.poses_translation[idx]/self.down_apix, fproj
 
 
 

@@ -545,4 +545,34 @@ def deform_structure(atom_positions, translation_per_residue, quaternions, segme
     return new_atom_positions
 
 
+def compute_cross_prod_mat(w: torch.Tensor) -> torch.Tensor:
+    """
+    Computes the skew symmetric matrix corresponding to a 3D vector, considered as a member of so(3).
+    :param w: (batch_size, 3)
+    return: (batch_size, 3, 3)
+    """
+    skew_mat = torch.zeros((w.shape[0], 3, 3), device=w.device)
+    skew_mat[:, 0, 1] = -w[:, -1]
+    skew_mat[:, 1, 0] = w[:, -1]
+    skew_mat[:, 0, -1] = w[:, 1]
+    skew_mat[:, -1, 0] = -w[:, 1]
+    skew_mat[:, 1, -1] = -w[:, 0]
+    skew_mat[:, -1, 1] = w[:, 0]
+    return skew_mat
+
+def compute_rotation_matrix_in_0(w: torch.Tensor) -> torch.Tensor:
+    """
+    Computes the rotation matrix in w=(0, 0, 0) using the formula I + [w]x
+    IMPORTANT NOTE: this formula works ONLY on w=(0, 0, 0). It is convenient because it has the same differential as
+                    Rodrigues formula. So we need not manually compute the gradient of the rotation matrix w.r.t w, we
+                    can use automatic differentiation.
+    :param w: (batch_size, 3), all components MUST BE 0.
+    return the identity matrix (batch_size, 3, 3)
+    """
+    return torch.eye(3, device=w.device)[None] + compute_cross_prod_mat(w)
+
+
+
+
+
 
