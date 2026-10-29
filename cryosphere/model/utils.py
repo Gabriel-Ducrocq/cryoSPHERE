@@ -406,7 +406,7 @@ def monitor_training(segmentation, segmenter, tracking_metrics, experiment_setti
     :param pred_im: torch.tensor(N_batch, N_pix, N_pix), sample of predicted images, without CTF corruption
     :param true_im: torch.tensor(N_batch, N_pix, N_pix), corresponding sample of true images. 
     """
-    if gpu_id == "cuda:0" or gpu_id == "cpu":
+    if gpu_id == "cuda:0" or gpu_id == "cpu" or gpu_id == 0:
         if tracking_metrics["wandb"] == True:
             ignore = ["wandb", "epoch", "path_results", "betas"]
             wandb.log({key: np.mean(val) for key, val in tracking_metrics.items() if key not in ignore})
