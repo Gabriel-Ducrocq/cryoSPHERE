@@ -406,7 +406,7 @@ def monitor_training(segmentation, segmenter, tracking_metrics, experiment_setti
     :param pred_im: torch.tensor(N_batch, N_pix, N_pix), sample of predicted images, without CTF corruption
     :param true_im: torch.tensor(N_batch, N_pix, N_pix), corresponding sample of true images. 
     """
-    if gpu_id == 0:
+    if gpu_id == "cuda:0" or gpu_id == "cpu":
         if tracking_metrics["wandb"] == True:
             ignore = ["wandb", "epoch", "path_results", "betas"]
             wandb.log({key: np.mean(val) for key, val in tracking_metrics.items() if key not in ignore})
@@ -434,7 +434,8 @@ def monitor_training(segmentation, segmenter, tracking_metrics, experiment_setti
         torch.save(segmenter.state_dict(), segmenter_path)
         information_strings = [f"""Epoch: {tracking_metrics["epoch"]} || Correlation loss: {tracking_metrics["correlation_loss"][0]} || KL prior latent: {tracking_metrics["kl_prior_latent"][0]} 
             || KL prior segmentation std: {tracking_metrics["kl_prior_segmentation_std"][0]} || KL prior segmentation proportions: {tracking_metrics["kl_prior_segmentation_proportions"][0]} ||
-            l2 penalty: {tracking_metrics["l2_pen"][0]} || Continuity loss: {tracking_metrics["continuity_loss"][0]} || Clashing loss: {tracking_metrics["clashing_loss"][0]}"""]
+            l2 penalty: {tracking_metrics["l2_pen"][0]} || Continuity loss: {tracking_metrics["continuity_loss"][0]} 
+            || Clashing loss: {tracking_metrics["clashing_loss"][0]} || Geodesic loss: {tracking_metrics["geodesic_rotation"][0]}"""]
         information_strings += [f"{loss_term} beta: {beta}" for loss_term, beta in tracking_metrics["betas"].items()]
         information_string = " || ".join(information_strings)
         logging.info(information_string)
