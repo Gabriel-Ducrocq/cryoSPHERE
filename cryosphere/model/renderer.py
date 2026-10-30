@@ -84,19 +84,40 @@ def translate_structure(Gauss_mean, translation_vectors):
     return translated_Gauss_mean
 
 
-def apply_ctf(images, ctf, indexes):
+def translate_fourier_image(fourier_images, translations, pixel_size, device="cpu"):
+    """
+    Translates the images by phase shifting the Fourier transform of that image
+    :param fourier_images: torch.tensor(batch_size, N_images, Npix, Npix) images in Fourier space. Note that
+                            the assumed convention for this is centered - 0 frequency at the center.
+    :param translations: torch.tensor(batch_size, N_images, 2) 2d translations to apply to the images.
+    :param pixel_size: float32, size of a pixel in Å.
+    :return: torch.tensor(batch_size, N_images, Npix, Npix) translated images in Fourier space. Note that
+                            the assumed convention for this is centered - 0 frequency at the center.
+    """
+    Npix = fourier_images.shape[-1]
+    freqs = torch.fft.fftshift(torch.fft.fftfreq(Npix, pixel_size, device=device))
+    #The next tensor is (batch_size, N_image, 2, N_freqs)
+    separate_freqs_translation = torch.exp(-2*np.pi*1j*torch.einsum("bkl, j -> bklj", translations, freqs))
+    translated_fourier_grid = torch.einsum("bkl, bkj -> bklj", separate_freqs_translation[:, :, 0, :], separate_freqs_translation[:, :, 1, :])
+    fourier_images *= translated_fourier_grid
+    return fourier_images
+
+
+def apply_ctf(images, ctf, indexes, translations=None, pixel_size=None, device="cpu"):
     """
     Apply ctf to images. We multiply by -1, because we currently are white on black, but the images are more generally black on white.
-    images: torch.tensor(batch_size, N_pix, N_pix)
+    images: torch.tensor(batch_size, N_heads, N_pix, N_pix)
     ctf: CTF object
     indexes: torch.tensor(batch_size, type=int), indexes of the images, to compute the ctf.
-    return torch.tensor(N_batch, N_pix, N_pix) of ctf corrupted images
+    return torch.tensor(N_batch, N_heads, N_pix, N_pix) of ctf corrupted images
     """
     fourier_images = primal_to_fourier2d(images)
     fourier_images *= -ctf.compute_ctf(indexes)
+    if translations is not None and pixel_size is not None:
+        fourier_images = translate_fourier_image(fourier_images, translations, pixel_size, device)
+
     ctf_corrupted = fourier2d_to_primal(fourier_images)
     return ctf_corrupted
-
 
 
 
