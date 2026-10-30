@@ -132,6 +132,7 @@ class ImageDataSet(Dataset):
             self.particles_df = np.load(star_cs_file_config["file"])
 
 
+        self.poses_translation_init = self.poses_translation.clone()
         print("Dataset size:", self.poses.shape[0], "apix:",self.apix)
         print("Normalizing training data")
 
@@ -160,7 +161,7 @@ class ImageDataSet(Dataset):
             f_sub_data = []
             # I have checked that the standard deviation of 10/100/1000 particles is similar
             for i in range(0, len(self), len(self) // 100):
-                _, _, _, _, _, fproj = self[i]
+                _, _, _, _, _, _, fproj = self[i]
                 f_sub_data.append(fproj)
 
             f_sub_data = torch.cat(f_sub_data, dim=0)
@@ -227,7 +228,7 @@ class ImageDataSet(Dataset):
             fproj = (fproj - self.f_mu) / self.f_std
             proj = fourier_to_primal_2d(fproj).real
 
-        return idx, proj, self.poses_quat[idx], self.poses[idx], self.poses_translation[idx], fproj
+        return idx, proj, self.poses_quat[idx], self.poses[idx], self.poses_translation[idx], self.poses_translation_init[idx], fproj
 
 
 

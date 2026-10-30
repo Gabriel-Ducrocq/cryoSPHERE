@@ -87,18 +87,18 @@ def translate_structure(Gauss_mean, translation_vectors):
 def translate_fourier_image(fourier_images, translations, pixel_size, device="cpu"):
     """
     Translates the images by phase shifting the Fourier transform of that image
-    :param fourier_images: torch.tensor(batch_size, N_images, Npix, Npix) images in Fourier space. Note that
+    :param fourier_images: torch.tensor(batch_size, Npix, Npix) images in Fourier space. Note that
                             the assumed convention for this is centered - 0 frequency at the center.
-    :param translations: torch.tensor(batch_size, N_images, 2) 2d translations to apply to the images.
+    :param translations: torch.tensor(batch_size, 2) 2d translations to apply to the images.
     :param pixel_size: float32, size of a pixel in Å.
-    :return: torch.tensor(batch_size, N_images, Npix, Npix) translated images in Fourier space. Note that
+    :return: torch.tensor(batch_size, Npix, Npix) translated images in Fourier space. Note that
                             the assumed convention for this is centered - 0 frequency at the center.
     """
     Npix = fourier_images.shape[-1]
     freqs = torch.fft.fftshift(torch.fft.fftfreq(Npix, pixel_size, device=device))
-    #The next tensor is (batch_size, N_image, 2, N_freqs)
-    separate_freqs_translation = torch.exp(-2*np.pi*1j*torch.einsum("bkl, j -> bklj", translations, freqs))
-    translated_fourier_grid = torch.einsum("bkl, bkj -> bklj", separate_freqs_translation[:, :, 0, :], separate_freqs_translation[:, :, 1, :])
+    #The next tensor is (batch_size, 2, N_freqs)
+    separate_freqs_translation = torch.exp(-2*np.pi*1j*torch.einsum("bl, j -> blj", translations, freqs))
+    translated_fourier_grid = torch.einsum("bl, bj -> blj", separate_freqs_translation[:, 0, :], separate_freqs_translation[:, 1, :])
     fourier_images *= translated_fourier_grid
     return fourier_images
 

@@ -55,17 +55,19 @@ def start_training(vae, image_translator, ctf, grid, gmm_repr, optimizer, datase
     for epoch in range(N_epochs):
         tracking_metrics = {"wandb":experiment_settings["wandb"], "epoch": epoch, "path_results":path_results ,"correlation_loss":[], "kl_prior_latent":[], 
                             "kl_prior_segmentation_mean":[], "kl_prior_segmentation_std":[], "kl_prior_segmentation_proportions":[], "l2_pen":[], "continuity_loss":[], 
-                            "clashing_loss":[], "geodesic_rotation":[]}
+                            "clashing_loss":[], "geodesic_rotation":[], "loss_translation":[]}
 
         data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers = experiment_settings["num_workers"], drop_last=True, sampler=DistributedSampler(dataset, drop_last=True))
         data_loader.sampler.set_epoch(epoch)
         data_loader = tqdm(iter(data_loader))
-        for batch_num, (indexes, batch_images, batch_poses_quat, batch_init_poses, batch_poses_translation, _) in enumerate(data_loader):
+        for batch_num, (indexes, batch_images, batch_poses_quat, batch_init_poses, batch_poses_translation, batch_init_poses_translation, _) in enumerate(data_loader):
             batch_images = batch_images.to(device)
             batch_poses_quat = batch_poses_quat.to(device)
             batch_poses = unitquat_to_rotmat(batch_poses_quat)
             batch_init_poses = batch_init_poses.to(device)
-            batch_poses_translation = batch_poses_translation.to(device)
+            batch_init_poses_translation = batch_init_poses_translation.to(device)
+            batch_poses_translation =batch_poses_translation.to(device)
+
             indexes = indexes.to(device)
             flattened_batch_images = batch_images.flatten(start_dim=-2)
             lp_batch_translated_images = low_pass_images(batch_images, lp_mask2d)
@@ -90,27 +92,38 @@ def start_training(vae, image_translator, ctf, grid, gmm_repr, optimizer, datase
                 optimizer.zero_grad()
 
             identity_w = torch.zeros((batch_size, 3), device=device, requires_grad=True)
-            optimizer_pose = torch.optim.Adam([identity_w], lr=experiment_settings["optimizer"]["pose_lr"])
+            identity_translation = torch.zeros((batch_size, 2), device=device, requires_grad=True)
+            optimizer_pose = torch.optim.Adam([{"params":[identity_w], "lr":experiment_settings["optimizer"]["pose_lr"]}
+                                                  , {"params": [identity_translation], "lr":experiment_settings["optimizer"]["translation_lr"]}])
             for _ in range(experiment_settings["pose_iters"]):
                 identity_rotmat = compute_rotation_matrix_in_0(identity_w)
                 new_rotmat = torch.einsum("bij, bjk -> bik", identity_rotmat, batch_poses)
+                new_translation = identity_translation + batch_poses_translation
                 posed_predicted_structures = renderer.rotate_structure(predicted_structures.detach(),new_rotmat)
                 predicted_images  = renderer.project(posed_predicted_structures, gmm_repr.sigmas, gmm_repr.amplitudes, grid)
-                batch_predicted_images = renderer.apply_ctf(predicted_images, ctf, indexes, -batch_poses_translation, dataset.down_apix)/dataset.f_std
+                batch_predicted_images = renderer.apply_ctf(predicted_images, ctf, indexes, -new_translation, dataset.down_apix)/dataset.f_std
                 loss_poses = calc_cor_loss(batch_predicted_images, lp_batch_translated_images, None)
                 loss_poses.backward()
                 optimizer_pose.step()
                 optimizer_pose.zero_grad()
                 with torch.no_grad():
+                    #I get the delta quaternion
                     new_quat = rotvec_to_unitquat(identity_w)
+                    # I compose the delta quaternion with the current one and renormalize to get the new pose
                     batch_poses_quat = roma.quat_normalize(roma.quat_product(new_quat, batch_poses_quat))
+                    #I et the batch_pose to the composition of the previous one and the new one.
                     batch_poses = unitquat_to_rotmat(batch_poses_quat)
+                    #I reset the w to 0.
                     identity_w.zero_()
 
-
+            # I compose the current translation with the identity translation that has been learnt.
+            batch_poses_translation = identity_translation.detach() + batch_poses_translation
             geodesic_distance = roma.rotmat_geodesic_distance(batch_poses.detach(), batch_init_poses).mean()
+            translation_distance = (batch_init_poses_translation.detach() - batch_poses_translation.detach()).norm(dim=-1).mean()
             tracking_metrics["geodesic_rotation"].append(geodesic_distance.detach().cpu().numpy())
+            tracking_metrics["loss_translation"].append(translation_distance.detach().cpu().numpy())
             dataset.poses_quat[indexes.cpu()] = roma.quat_normalize(batch_poses_quat.detach()).cpu()
+            dataset.poses_translation[indexes.cpu()] = batch_poses_translation.cpu()
 
         if scheduler:
             scheduler.step()
