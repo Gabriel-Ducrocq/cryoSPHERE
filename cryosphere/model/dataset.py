@@ -227,7 +227,7 @@ class ImageDataSet(Dataset):
             fproj = (fproj - self.f_mu) / self.f_std
             proj = fourier_to_primal_2d(fproj).real
 
-        return idx, proj, self.poses_quat[idx], self.poses[idx], self.poses_translation[idx]/self.down_apix, fproj
+        return idx, proj, self.poses_quat[idx], self.poses[idx], self.poses_translation[idx], fproj
 
 
 

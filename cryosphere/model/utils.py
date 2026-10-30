@@ -406,8 +406,8 @@ def monitor_training(segmentation, segmenter, tracking_metrics, experiment_setti
     :param pred_im: torch.tensor(N_batch, N_pix, N_pix), sample of predicted images, without CTF corruption
     :param true_im: torch.tensor(N_batch, N_pix, N_pix), corresponding sample of true images. 
     """
-    print("DO I ENTER MONITOR ?", gpu_id, gpu_id == "cuda:0", gpu_id =="cpu", gpu_id==0)
-    if gpu_id == "cuda:0" or gpu_id == "cpu" or gpu_id == 0:
+    print("DO I ENTER MONITOR ?", str(gpu_id), str(gpu_id) == "cuda:0", str(gpu_id) =="cpu", gpu_id==0)
+    if str(gpu_id) == "cuda:0" or str(gpu_id) == "cpu" or gpu_id == 0:
         print("DO I GET IN THE IF ?")
         if tracking_metrics["wandb"] == True:
             print("DO I GET IN THE SECOND IF ?")
