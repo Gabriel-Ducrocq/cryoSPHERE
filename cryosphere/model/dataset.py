@@ -1,4 +1,6 @@
 import os
+
+import roma
 import torch
 import mrcfile
 import starfile
@@ -95,7 +97,8 @@ def cs_file_reader(cs_file_path, apix, abinit, hetrefine):
 
 class ImageDataSet(Dataset):
     def __init__(self, apix, side_shape, star_cs_file_config, particles_path, down_side_shape=None, down_method="interp",
-                 rad_mask=None, refine_poses = False):
+                 rad_mask=None, refine_poses = False, refined_poses_rotation=None, refined_poses_translations= None,
+                 gt_star_cs_file_config=None):
         """
         Create a dataset of images and poses.
         :param apix: float, size of a pixel in Å.
@@ -106,6 +109,10 @@ class ImageDataSet(Dataset):
         :param down_method: str, downsampling method to use if down_side_shape < side_shape. Currently only interp is supported.
         :param rad_mask: float, radius of the mask used on the input image. If None, no mask is used.
         :param refine_poses: bool, whether we refine the poses or not.
+        :param refined_poses_rotation: path to a file containing the refined poses rotation of a previous run that we want to keep refining.
+        :param refined_poses_translations: same but for translations-
+        :param gt_star_cs_file_config: path to the star/cs file containing the ground truth poses if we have them, to
+                                        monitor convergence.
         """
         self.refine_poses = refine_poses
         self.side_shape = side_shape
@@ -113,26 +120,52 @@ class ImageDataSet(Dataset):
         self.apix = apix
         self.particles_path = particles_path
         self.mask = None
+        self.gt_star_cs_file_config = gt_star_cs_file_config
         if rad_mask is not None:
             self.mask = Mask(down_side_shape if down_side_shape is not None else side_shape, rad_mask)
 
         self.pose_file_extension = os.path.splitext(star_cs_file_config["file"])[-1].replace(".", "")
+        if gt_star_cs_file_config:
+            self.pose_file_extension_gt = os.path.splitext(gt_star_cs_file_config["file"])[-1].replace(".", "")
+            assert self.pose_file_extension in ["star"], "For now, monitoring convergence to GT only supported with star file."
+
         assert self.pose_file_extension in ["cs", "star"], "Pose file must be a starfile or a cs file."
         if self.pose_file_extension == "star":
-            self.poses, self.poses_translation = starfile_reader(star_cs_file_config["file"], self.apix)
-            self.poses_quat = rotmat_to_unitquat(self.poses)
             self.particles_df = starfile.read(star_cs_file_config["file"])
             if type(self.particles_df) is dict and "particles" in self.particles_df:
                 self.particles_df = self.particles_df["particles"]
         else:
-            self.poses, self.poses_translation = cs_file_reader(star_cs_file_config["file"], self.apix, star_cs_file_config.get("abinit", False), 
+            self.particles_df = np.load(star_cs_file_config["file"])
+
+        if gt_star_cs_file_config:
+            self.particles_df_gt = starfile.read(gt_star_cs_file_config["file"])
+            if type(self.particles_df_gt) is dict and "particles" in self.particles_df_gt:
+                self.particles_df_gt = self.particles_df_gt["particles"]
+
+            self.poses_gt, self.poses_translation_gt = starfile_reader(gt_star_cs_file_config["file"], self.apix)
+
+        if refined_poses_rotation is not None and refined_poses_translations is not None:
+            poses_rotation = np.load(refined_poses_rotation)
+            refined_poses_translations = np.load(refined_poses_translations)
+            self.poses_quat = torch.tensor(poses_rotation)
+            self.poses_translation = torch.tensor(refined_poses_translations)
+        if self.pose_file_extension == "star":
+            self.poses, self.poses_translation_init = starfile_reader(star_cs_file_config["file"], self.apix)
+            if refined_poses_translations is None and refined_poses_rotation is None:
+                self.poses_quat = rotmat_to_unitquat(self.poses).clone()
+                self.poses_translation = self.poses_translation_init.clone()
+
+            self.particles_df = starfile.read(star_cs_file_config["file"])
+            if type(self.particles_df) is dict and "particles" in self.particles_df:
+                self.particles_df = self.particles_df["particles"]
+        else:
+            assert False, """Not implemented for cryoSPARC yet !"""
+            self.poses, self.poses_translation = cs_file_reader(star_cs_file_config["file"], self.apix, star_cs_file_config.get("abinit", False),
                                                                 star_cs_file_config.get("hetrefine", False))
 
             self.poses_quat = rotmat_to_unitquat(self.poses)
-            self.particles_df = np.load(star_cs_file_config["file"])
+            self.poses_translation_init = self.poses_translation.clone()
 
-
-        self.poses_translation_init = self.poses_translation.clone()
         print("Dataset size:", self.poses.shape[0], "apix:",self.apix)
         print("Normalizing training data")
 
@@ -161,7 +194,7 @@ class ImageDataSet(Dataset):
             f_sub_data = []
             # I have checked that the standard deviation of 10/100/1000 particles is similar
             for i in range(0, len(self), len(self) // 100):
-                _, _, _, _, _, _, fproj = self[i]
+                _, _, _, _, _, _, fproj, _, _ = self[i]
                 f_sub_data.append(fproj)
 
             f_sub_data = torch.cat(f_sub_data, dim=0)
@@ -228,9 +261,11 @@ class ImageDataSet(Dataset):
             fproj = (fproj - self.f_mu) / self.f_std
             proj = fourier_to_primal_2d(fproj).real
 
-        return idx, proj, self.poses_quat[idx], self.poses[idx], self.poses_translation[idx], self.poses_translation_init[idx], fproj
+        if self.gt_star_cs_file_config is None:
+            return idx, proj, self.poses_quat[idx], self.poses[idx], self.poses_translation[idx], self.poses_translation_init[idx], fproj
 
-
+        return (idx, proj, self.poses_quat[idx], self.poses[idx], self.poses_translation[idx],
+                self.poses_translation_init[idx], fproj, self.poses_gt[idx], self.poses_translation_gt[idx])
 
 def primal_to_fourier_2d(images):
     """

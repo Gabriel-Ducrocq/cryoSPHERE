@@ -139,10 +139,27 @@ def start_sample_latent(rank, world_size,  yaml_setting_path, output_path, model
     scheduler, base_structure, lp_mask2d, mask, amortized, path_results, structural_loss_parameters, segmenter)  = utils.parse_yaml(yaml_setting_path, rank, analyze=True)
     vae.load_state_dict(torch.load(model_path))
     vae.eval()
-    z = sample_latent_variables(rank, world_size, vae, dataset, batch_size, output_path)
+    z = sample_latent_variables(rank, world_size, vae, dataset, batch_size, output_path, experiment_settings)
     destroy_process_group()
 
-def sample_latent_variables(gpu_id, world_size, vae, dataset, batch_size, output_path, num_workers=4):
+def start_sample_latent_non_distributed(yaml_setting_path, output_path, model_path, segmenter_path, num_workers=4):
+    print("FIRST")
+    utils.ddp_setup(0, 1)
+    print("SECOND")
+    print("PATH", yaml_setting_path)
+    (vae, image_translator, ctf_experiment, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings,
+     device,
+     scheduler, base_structure, lp_mask2d, mask, amortized, path_results, structural_loss_parameters,
+     segmenter) = utils.parse_yaml(yaml_setting_path, 0, analyze=True)
+    print("THIRD")
+    vae.load_state_dict(torch.load(model_path))
+    vae.eval()
+    print("AGAIN")
+    z = sample_latent_variables(0, 1, vae, dataset, batch_size, output_path, experiment_settings)
+    destroy_process_group()
+
+
+def sample_latent_variables(gpu_id, world_size, vae, dataset, batch_size, output_path, experiment_settings, num_workers=4):
     """
     Sample all the latent variables of the dataset and save them in a .npy file
     :param vae: object of class VAE corresponding to the model we want to analyze.
@@ -152,19 +169,29 @@ def sample_latent_variables(gpu_id, world_size, vae, dataset, batch_size, output
     :param num_workers: integer, number of workers
     return 
     """
-    vae.to(gpu_id)
-    vae = DDP(vae, device_ids=[gpu_id])
+    print("AGAIN 2")
+    if torch.cuda.is_available() and experiment_settings["device"] != "GPU":
+        device= torch.device(f"cuda:{gpu_id}")
+    elif torch.backends.mps.is_available() and experiment_settings["device"] != "GPU":
+        device=torch.device(f"mps:{gpu_id}")
+    else:
+        device=torch.device("cpu")
+
+    ddp_ids = [gpu_id] if torch.cuda.is_available() else None
+    print("DDP_IDS", ddp_ids)
+    vae.to(device)
+    vae = DDP(vae, device_ids=ddp_ids)
     data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers, drop_last=False, sampler=DistributedSampler(dataset, shuffle=False, drop_last=False))
     data_loader.sampler.set_epoch(0)
     data_loader = tqdm(iter(data_loader))
     all_latent_variables = []
     all_indexes = []
-    for batch_num, (indexes, batch_images, batch_poses, batch_poses_translation, _) in enumerate(data_loader):
-        batch_images = batch_images.to(gpu_id)
-        batch_poses = batch_poses.to(gpu_id)
-        batch_poses_translation = batch_poses_translation.to(gpu_id)
-        indexes = indexes.to(gpu_id)
-
+    for batch_num, (indexes, batch_images, batch_poses_quat, batch_init_poses, batch_poses_translation, batch_init_poses_translation, _) in enumerate(data_loader):
+        batch_images = batch_images.to(device)
+        #batch_poses = batch_poses.to(device)
+        #batch_poses_translation = batch_poses_translation.to(device)
+        indexes = indexes.to(device)
+        print("BATCH NUM", batch_num)
         batch_images = batch_images.flatten(start_dim=-2)
         latent_variables, latent_mean, latent_std = vae.module.sample_latent(batch_images, indexes)
         latent_mean = latent_mean.contiguous()
@@ -344,7 +371,12 @@ def analyze(yaml_setting_path, model_path, segmenter_path, output_path, z, thinn
 
     world_size = torch.cuda.device_count()
     if z is None:
-        mp.spawn(start_sample_latent, args=(world_size, yaml_setting_path, output_path, model_path, segmenter_path), nprocs=world_size)
+        if world_size == 0:
+            print("STARTING SAMPLING")
+            start_sample_latent_non_distributed(yaml_setting_path, output_path, model_path, segmenter_path)
+        else:
+            mp.spawn(start_sample_latent, args=(world_size, yaml_setting_path, output_path, model_path, segmenter_path), nprocs=world_size)
+
         latent_path = os.path.join(output_path, "z.npy")
         z = np.load(latent_path)
 

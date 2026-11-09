@@ -1,5 +1,4 @@
 import sys
-
 import roma
 import torch
 import wandb
@@ -16,7 +15,7 @@ from cryosphere.model import renderer
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
-from cryosphere.model.utils import low_pass_images, ddp_setup, compute_rotation_matrix_in_0
+from cryosphere.model.utils import low_pass_images, ddp_setup, compute_rotation_matrix_in_0, remove_global_translation
 from torch.distributed import destroy_process_group
 from cryosphere.model.loss import compute_loss, calc_cor_loss
 
@@ -46,89 +45,117 @@ def train_non_distributed(yaml_setting_path):
 
 def start_training(vae, image_translator, ctf, grid, gmm_repr, optimizer, dataset, N_epochs, batch_size, experiment_settings, scheduler, 
     base_structure, lp_mask2d, mask_images, amortized, path_results, structural_loss_parameters, segmenter, gpu_id):
-    device = torch.device(f"cuda:{gpu_id}") if torch.cuda.is_available() else torch.device("cpu")
-    ddp_ids = [gpu_id] if torch.cuda.is_available() else None
+    if torch.cuda.is_available() and experiment_settings["device"] == "GPU":
+        device= torch.device(f"cuda:{gpu_id}")
+    elif torch.backends.mps.is_available() and experiment_settings["device"] == "GPU":
+        device=torch.device(f"mps:{gpu_id}")
+    else:
+        device=torch.device("cpu")
 
+    ddp_ids = [gpu_id] if torch.cuda.is_available() or torch.backends.mps.is_available() else None
+    print("DDP_IDS", ddp_ids)
+    vae.to(device)
+    segmenter.to(device)
+    if device.type == "cuda":
+        vae = DDP(vae, device_ids=ddp_ids)
+        segmenter = DDP(segmenter, device_ids=ddp_ids)
 
-    vae = DDP(vae, device_ids=ddp_ids)
-    segmenter = DDP(segmenter, device_ids=ddp_ids)
+    model_vae = vae.module if hasattr(vae, "module") else vae
+    seg = segmenter.module if hasattr(segmenter, "module") else segmenter
+    lp_mask2d = lp_mask2d.to(device)
     for epoch in range(N_epochs):
         tracking_metrics = {"wandb":experiment_settings["wandb"], "epoch": epoch, "path_results":path_results ,"correlation_loss":[], "kl_prior_latent":[], 
                             "kl_prior_segmentation_mean":[], "kl_prior_segmentation_std":[], "kl_prior_segmentation_proportions":[], "l2_pen":[], "continuity_loss":[], 
-                            "clashing_loss":[], "geodesic_rotation":[], "loss_translation":[]}
+                            "clashing_loss":[], "geodesic_rotation":[], "loss_translation":[], "geodesic_loss_gt":[], "loss_translation_gt":[]}
 
         data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers = experiment_settings["num_workers"], drop_last=True, sampler=DistributedSampler(dataset, drop_last=True))
         data_loader.sampler.set_epoch(epoch)
         data_loader = tqdm(iter(data_loader))
-        for batch_num, (indexes, batch_images, batch_poses_quat, batch_init_poses, batch_poses_translation, batch_init_poses_translation, _) in enumerate(data_loader):
+        for batch_num, (indexes, batch_images, batch_poses_quat, batch_init_poses, batch_poses_translation, batch_init_poses_translation, _, poses_gt, poses_translation_gt) in enumerate(data_loader):
             batch_images = batch_images.to(device)
             batch_poses_quat = batch_poses_quat.to(device)
             batch_poses = unitquat_to_rotmat(batch_poses_quat)
             batch_init_poses = batch_init_poses.to(device)
             batch_init_poses_translation = batch_init_poses_translation.to(device)
             batch_poses_translation =batch_poses_translation.to(device)
-
+            poses_gt = poses_gt.to(device)
+            poses_translation_gt = poses_translation_gt.to(device)
             indexes = indexes.to(device)
             flattened_batch_images = batch_images.flatten(start_dim=-2)
             lp_batch_translated_images = low_pass_images(batch_images, lp_mask2d)
             if amortized:
-                latent_variables, latent_mean, latent_std = vae.module.sample_latent(flattened_batch_images)
+                latent_variables, latent_mean, latent_std = model_vae.sample_latent(flattened_batch_images)
             else:
-                latent_variables, latent_mean, latent_std = vae.module.sample_latent(None, indexes)
+                latent_variables, latent_mean, latent_std = model_vae.sample_latent(None, indexes)
 
-            segmentation = segmenter.module.sample_segments(batch_images.shape[0])
-            quaternions_per_domain, translations_per_domain = vae.module.decode(latent_variables)
+            segmentation = seg.sample_segments(batch_images.shape[0])
+            quaternions_per_domain, translations_per_domain = model_vae.decode(latent_variables)
             translation_per_residue = model.utils.compute_translations_per_residue(translations_per_domain, segmentation, base_structure.coord.shape[0], batch_size, device)
             predicted_structures = model.utils.deform_structure(gmm_repr.mus, translation_per_residue, quaternions_per_domain, segmentation, device)
+            predicted_structures = remove_global_translation(predicted_structures, gmm_repr.mus)
             for _ in range(experiment_settings["structure_iters"]):
                 posed_predicted_structures = renderer.rotate_structure(predicted_structures, batch_poses)
                 predicted_images  = renderer.project(posed_predicted_structures, gmm_repr.sigmas, gmm_repr.amplitudes, grid)
                 batch_predicted_images = renderer.apply_ctf(predicted_images, ctf, indexes, -batch_poses_translation, dataset.down_apix, device=device)/dataset.f_std
-                loss = compute_loss(batch_predicted_images, lp_batch_translated_images, None, latent_mean, latent_std, vae.module, segmenter.module, experiment_settings, tracking_metrics,
+                loss = compute_loss(batch_predicted_images, lp_batch_translated_images, None, latent_mean, latent_std, model_vae, seg, experiment_settings, tracking_metrics,
                     structural_loss_parameters= structural_loss_parameters, epoch=epoch, predicted_structures=predicted_structures, device=device)
 
                 loss.backward()
                 optimizer.step()
                 optimizer.zero_grad()
 
-            identity_w = torch.zeros((batch_size, 3), device=device, requires_grad=True)
-            identity_translation = torch.zeros((batch_size, 2), device=device, requires_grad=True)
-            optimizer_pose = torch.optim.Adam([{"params":[identity_w], "lr":experiment_settings["optimizer"]["pose_lr"]}
-                                                  , {"params": [identity_translation], "lr":experiment_settings["optimizer"]["translation_lr"]}])
-            for _ in range(experiment_settings["pose_iters"]):
-                identity_rotmat = compute_rotation_matrix_in_0(identity_w)
-                new_rotmat = torch.einsum("bij, bjk -> bik", identity_rotmat, batch_poses)
-                new_translation = identity_translation + batch_poses_translation
-                posed_predicted_structures = renderer.rotate_structure(predicted_structures.detach(),new_rotmat)
-                predicted_images  = renderer.project(posed_predicted_structures, gmm_repr.sigmas, gmm_repr.amplitudes, grid)
-                batch_predicted_images = renderer.apply_ctf(predicted_images, ctf, indexes, -new_translation, dataset.down_apix, device=device)/dataset.f_std
-                loss_poses = calc_cor_loss(batch_predicted_images, lp_batch_translated_images, None)
-                loss_poses.backward()
-                optimizer_pose.step()
-                optimizer_pose.zero_grad()
-                with torch.no_grad():
-                    #I get the delta quaternion
-                    new_quat = rotvec_to_unitquat(identity_w)
-                    # I compose the delta quaternion with the current one and renormalize to get the new pose
-                    batch_poses_quat = roma.quat_normalize(roma.quat_product(new_quat, batch_poses_quat))
-                    #I et the batch_pose to the composition of the previous one and the new one.
-                    batch_poses = unitquat_to_rotmat(batch_poses_quat)
-                    #I reset the w to 0.
-                    identity_w.zero_()
+            if experiment_settings["epoch_start_pose_refinement"] < epoch:
+                identity_w = torch.zeros((batch_size, 3), device=device, requires_grad=True)
+                identity_translation = torch.zeros((batch_size, 2), device=device, requires_grad=True)
+                optimizer_pose = torch.optim.Adam([{"params":[identity_w], "lr":experiment_settings["optimizer"]["pose_lr"]}
+                                                      , {"params": [identity_translation], "lr":experiment_settings["optimizer"]["translation_lr"]}])
+                for _ in range(experiment_settings["pose_iters"]):
+                    identity_rotmat = compute_rotation_matrix_in_0(identity_w)
+                    new_rotmat = torch.einsum("bij, bjk -> bik", identity_rotmat, batch_poses)
+                    new_translation = identity_translation + batch_poses_translation
+                    posed_predicted_structures = renderer.rotate_structure(predicted_structures.detach(),new_rotmat)
+                    predicted_images  = renderer.project(posed_predicted_structures, gmm_repr.sigmas, gmm_repr.amplitudes, grid)
+                    batch_predicted_images = renderer.apply_ctf(predicted_images, ctf, indexes, -new_translation, dataset.down_apix, device=device)/dataset.f_std
+                    loss_poses = calc_cor_loss(batch_predicted_images, lp_batch_translated_images, None)
+                    loss_poses.backward()
+                    optimizer_pose.step()
+                    optimizer_pose.zero_grad()
+                    tracking_metrics["correlation_loss"].append(loss_poses.detach().cpu().numpy())
+                    with torch.no_grad():
+                        #I get the delta quaternion
+                        new_quat = rotvec_to_unitquat(identity_w)
+                        # I compose the delta quaternion with the current one and renormalize to get the new pose
+                        batch_poses_quat = roma.quat_normalize(roma.quat_product(new_quat, batch_poses_quat))
+                        #I et the batch_pose to the composition of the previous one and the new one.
+                        batch_poses = unitquat_to_rotmat(batch_poses_quat)
+                        #I reset the w to 0.
+                        identity_w.zero_()
 
-            # I compose the current translation with the identity translation that has been learnt.
-            batch_poses_translation = identity_translation.detach() + batch_poses_translation
-            geodesic_distance = roma.rotmat_geodesic_distance(batch_poses.detach(), batch_init_poses).mean()
-            translation_distance = (batch_init_poses_translation.detach() - batch_poses_translation.detach()).norm(dim=-1).mean()
-            tracking_metrics["geodesic_rotation"].append(geodesic_distance.detach().cpu().numpy())
-            tracking_metrics["loss_translation"].append(translation_distance.detach().cpu().numpy())
-            dataset.poses_quat[indexes.cpu()] = roma.quat_normalize(batch_poses_quat.detach()).cpu()
-            dataset.poses_translation[indexes.cpu()] = batch_poses_translation.cpu()
+                # I compose the current translation with the identity translation that has been learnt.
+                batch_poses_translation = identity_translation.detach() + batch_poses_translation
+                geodesic_distance = roma.rotmat_geodesic_distance(batch_poses.detach(), batch_init_poses).mean()
+                geodesic_distance_gt = roma.rotmat_geodesic_distance(batch_poses.detach(), poses_gt).mean()
+                translation_loss_gt =  (poses_translation_gt.detach() - batch_poses_translation.detach()).norm(dim=-1).mean()
+                translation_distance = (batch_init_poses_translation.detach() - batch_poses_translation.detach()).norm(dim=-1).mean()
+                tracking_metrics["geodesic_rotation"].append(geodesic_distance.detach().cpu().numpy())
+                tracking_metrics["loss_translation"].append(translation_distance.detach().cpu().numpy())
+                tracking_metrics["geodesic_loss_gt"].append(geodesic_distance_gt.detach().cpu().numpy())
+                tracking_metrics["loss_translation_gt"].append(translation_loss_gt.detach().cpu().numpy())
+                dataset.poses_quat[indexes.cpu()] = roma.quat_normalize(batch_poses_quat.detach()).cpu()
+                dataset.poses_translation[indexes.cpu()] = batch_poses_translation.cpu()
+            else:
+                tracking_metrics["geodesic_rotation"].append(None)
+                tracking_metrics["loss_translation"].append(None)
+                tracking_metrics["geodesic_loss_gt"].append(None)
+                tracking_metrics["loss_translation_gt"].append(None)
+
 
         if scheduler:
             scheduler.step()
 
-        model.utils.monitor_training(segmentation, segmenter.module, tracking_metrics, experiment_settings, vae.module, optimizer, predicted_images, batch_images, device)
+        model.utils.monitor_training(segmentation, seg, tracking_metrics, experiment_settings, model_vae,
+                                     optimizer, predicted_images, batch_images, device, epoch, dataset,
+                                     experiment_settings["structure_iters"] == 0)
 
 
 def cryosphere_train():

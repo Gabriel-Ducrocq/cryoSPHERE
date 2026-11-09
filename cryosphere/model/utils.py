@@ -12,6 +12,8 @@ import mrcfile
 import warnings
 import starfile
 import numpy as np
+from sympy import all_roots
+
 file_dir = os.path.dirname(__file__)
 sys.path.append(file_dir)
 import pandas as pd
@@ -174,7 +176,7 @@ def parse_yaml(path, gpu_id, analyze=False):
         random.seed(seed)
         # Set seed for NumPy
         np.random.seed(seed)
-        
+
     if experiment_settings["deterministic_cuda"]:
         # Ensure deterministic behavior for PyTorch operations
         torch.backends.cudnn.deterministic = True
@@ -197,17 +199,17 @@ def parse_yaml(path, gpu_id, analyze=False):
         shutil.copyfile(image_file, os.path.join(path_results, experiment_settings["image_yaml"]))
 
     particles_path = os.path.join(folder_path, experiment_settings["particles_path"])
-
     with open(image_file, "r") as file:
         image_settings = yaml.safe_load(file)
 
-    if experiment_settings["device"] == "GPU":
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available() and experiment_settings["device"] == "GPU":
+        device= torch.device(f"cuda:{gpu_id}")
+    elif torch.backends.mps.is_available() and experiment_settings["device"] == "GPU":
+        device=torch.device(f"mps:{gpu_id}")
     else:
-        device = "cpu"
+        device=torch.device("cpu")
 
-
-    logging.basicConfig(filename=os.path.join(path_results, "run.log"), encoding='utf-8', level=logging.DEBUG, filemode='w', format='%(asctime)s %(levelname)s : %(message)s', 
+    logging.basicConfig(filename=os.path.join(path_results, "run.log"), encoding='utf-8', level=logging.DEBUG, filemode='w', format='%(asctime)s %(levelname)s : %(message)s',
         datefmt='%m/%d/%Y %I:%M:%S')
 
     N_images = experiment_settings["N_images"]
@@ -236,7 +238,7 @@ def parse_yaml(path, gpu_id, analyze=False):
         vae.load_state_dict(torch.load(experiment_settings["resume_training"]["model"]))
         vae.to(device)
 
-
+    print("BBBBBBBBBB")
     grid = EMAN2Grid(Npix_downsize, apix_downsize, device=device)
     base_structure_path = os.path.join(folder_path, experiment_settings["base_structure_path"])
     base_structure = Polymer.from_pdb(base_structure_path)
@@ -276,7 +278,12 @@ def parse_yaml(path, gpu_id, analyze=False):
 
     cs_star_config = experiment_settings["cs_star_file"]
     ctf_experiment = CTF.create_ctf(cs_star_config, apix = apix_downsize, side_shape=Npix_downsize , device=device)
-    dataset = ImageDataSet(apix, Npix, cs_star_config, particles_path, down_side_shape=Npix_downsize, rad_mask=experiment_settings.get("input_mask_radius"))
+    refined_rotations = experiment_settings.get("refined_rotations_path", None)
+    refined_translations = experiment_settings.get("refined_translations_path", None)
+    dataset = ImageDataSet(apix, Npix, cs_star_config, particles_path, down_side_shape=Npix_downsize,
+                           rad_mask=experiment_settings.get("input_mask_radius"), refined_poses_rotation=refined_rotations,
+                           refined_poses_translations=refined_translations,
+                           gt_star_cs_file_config=experiment_settings.get("cs_star_file_gt", None))
 
     scheduler = None
     if "scheduler" in experiment_settings:
@@ -394,7 +401,8 @@ class SpatialGridTranslate(torch.nn.Module):
         return sampled[:, 0, :, :]
 
 
-def monitor_training(segmentation, segmenter, tracking_metrics, experiment_settings, vae, optimizer, pred_im, true_im, gpu_id):
+def monitor_training(segmentation, segmenter, tracking_metrics, experiment_settings, vae, optimizer, pred_im, true_im, gpu_id,
+                     epoch, dataset, pose_refinement_only):
     """
     Monitors the training process through wandb and saving models. The metrics are logged into a file and optionnally sent to Weight and Biases.
     :param segmentation: torch.tensor(N_batch, N_residues, N_segments) weights of the segmentation
@@ -404,14 +412,21 @@ def monitor_training(segmentation, segmenter, tracking_metrics, experiment_setti
     :param vae: object of class VAE.
     :param optimizer: optimizer object used in this run
     :param pred_im: torch.tensor(N_batch, N_pix, N_pix), sample of predicted images, without CTF corruption
-    :param true_im: torch.tensor(N_batch, N_pix, N_pix), corresponding sample of true images. 
+    :param true_im: torch.tensor(N_batch, N_pix, N_pix), corresponding sample of true images.
+    :param epoch: integer, epoch numbers
+    :param dataset: torch Dataset
     """
     print("DO I ENTER MONITOR ?", str(gpu_id), str(gpu_id) == "cuda:0", str(gpu_id) =="cpu", gpu_id==0)
-    if str(gpu_id) == "cuda:0" or str(gpu_id) == "cpu" or gpu_id == 0:
+    if str(gpu_id) == "cuda:0" or str(gpu_id) == "cpu" or gpu_id == 0 or str(gpu_id) == "mps:0":
         print("DO I GET IN THE IF ?")
         if tracking_metrics["wandb"] == True:
             print("DO I GET IN THE SECOND IF ?")
-            ignore = ["wandb", "epoch", "path_results", "betas"]
+            if experiment_settings["epoch_start_pose_refinement"] < epoch:
+                ignore = ["wandb", "epoch", "path_results", "betas"]
+            else:
+                ignore = ["wandb", "epoch", "path_results", "betas", "geodesic_rotation", "loss_translation",
+                          "geodesic_loss_gt", "loss_translation_gt"]
+
             wandb.log({key: np.mean(val) for key, val in tracking_metrics.items() if key not in ignore})
             wandb.log({"epoch": tracking_metrics["epoch"]})
             wandb.log({"lr_segmentation":optimizer.param_groups[0]['lr']})
@@ -428,20 +443,31 @@ def monitor_training(segmentation, segmenter, tracking_metrics, experiment_setti
             true_image_wandb = wandb.Image(true_im, caption="True image")
             wandb.log({"Images/true_image": true_image_wandb})
             wandb.log({"Images/predicted_image": predicted_image_wandb})
-            for loss_term, beta in tracking_metrics["betas"].items():
-                wandb.log({f"betas/{loss_term}": beta})
+            if not pose_refinement_only:
+                for loss_term, beta in tracking_metrics["betas"].items():
+                    wandb.log({f"betas/{loss_term}": beta})
 
         model_path = os.path.join(experiment_settings["folder_path"], "cryoSPHERE", "ckpt" + str(tracking_metrics["epoch"]) + ".pt" )
         segmenter_path = os.path.join(experiment_settings["folder_path"], "cryoSPHERE", "seg" + str(tracking_metrics["epoch"]) + ".pt" )
         torch.save(vae.state_dict(), model_path)
         torch.save(segmenter.state_dict(), segmenter_path)
-        information_strings = [f"""Epoch: {tracking_metrics["epoch"]} || Correlation loss: {tracking_metrics["correlation_loss"][0]} || KL prior latent: {tracking_metrics["kl_prior_latent"][0]} 
-            || KL prior segmentation std: {tracking_metrics["kl_prior_segmentation_std"][0]} || KL prior segmentation proportions: {tracking_metrics["kl_prior_segmentation_proportions"][0]} ||
-            l2 penalty: {tracking_metrics["l2_pen"][0]} || Continuity loss: {tracking_metrics["continuity_loss"][0]} 
-            || Clashing loss: {tracking_metrics["clashing_loss"][0]} || Geodesic loss: {tracking_metrics["geodesic_rotation"][0]} || Loss translation: {tracking_metrics["loss_translation"][0]}"""]
-        information_strings += [f"{loss_term} beta: {beta}" for loss_term, beta in tracking_metrics["betas"].items()]
-        information_string = " || ".join(information_strings)
-        logging.info(information_string)
+        if epoch > experiment_settings["epoch_start_pose_refinement"]:
+            all_translations = dataset.poses_translation.numpy()
+            all_quaternions = dataset.poses_quat.numpy()
+            all_trans_path = os.path.join(experiment_settings["folder_path"], "cryoSPHERE",
+                                      f"""refined_translations_{epoch}""")
+            all_quat_path = os.path.join(experiment_settings["folder_path"], "cryoSPHERE",
+                                      f"""refined_rotations_{epoch}""")
+            np.save(all_trans_path, all_translations)
+            np.save(all_quat_path, all_quaternions)
+        if not pose_refinement_only:
+            information_strings = [f"""Epoch: {tracking_metrics["epoch"]} || Correlation loss: {tracking_metrics["correlation_loss"][0]} || KL prior latent: {tracking_metrics["kl_prior_latent"][0]} 
+                || KL prior segmentation std: {tracking_metrics["kl_prior_segmentation_std"][0]} || KL prior segmentation proportions: {tracking_metrics["kl_prior_segmentation_proportions"][0]} ||
+                l2 penalty: {tracking_metrics["l2_pen"][0]} || Continuity loss: {tracking_metrics["continuity_loss"][0]} 
+                || Clashing loss: {tracking_metrics["clashing_loss"][0]} || Geodesic loss: {tracking_metrics["geodesic_rotation"][0]} || Loss translation: {tracking_metrics["loss_translation"][0]}"""]
+            information_strings += [f"{loss_term} beta: {beta}" for loss_term, beta in tracking_metrics["betas"].items()]
+            information_string = " || ".join(information_strings)
+            logging.info(information_string)
 
 
 def read_pdb(path):
@@ -573,6 +599,28 @@ def compute_rotation_matrix_in_0(w: torch.Tensor) -> torch.Tensor:
     return the identity matrix (batch_size, 3, 3)
     """
     return torch.eye(3, device=w.device)[None] + compute_cross_prod_mat(w)
+
+
+
+def remove_global_translation(predicted_structures: torch.Tensor, base_structure: torch.Tensor) -> torch.Tensor:
+    """
+    We want the deformed structure to have same center of mass as the base structure. That is because even if the base
+    structure's center of mass is at the origin, rotating differently each residue might shift the center of mass in a
+    way that allows the neural network to slightly compensate the refined translations.
+    In addition, the different translations of each residue might also be used to shift the protein.
+    A way to remove these effects if to match the center of masse of the predicted structures to the base structures,
+    effectively removing both effects.
+    :param predicted_structures: tensor predicted structures (batch_size, N_residues, 3)
+    :param base_structure: tensor of the base structure (N_residues, 3)
+    return: tensor of predicted structures for which the center of mass matches the one of the
+            base structure (batch_size, N_residues, 3).
+    """
+    center_of_masses_predicted = torch.mean(predicted_structures, dim=1, keepdim=True)
+    center_of_mass_base = torch.mean(base_structure, dim=0, keepdim=True)
+    centered_predicted = predicted_structures - center_of_masses_predicted + center_of_mass_base
+    return centered_predicted
+
+
 
 
 
