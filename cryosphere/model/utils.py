@@ -621,17 +621,30 @@ def remove_global_translation(predicted_structures: torch.Tensor, base_structure
     return centered_predicted
 
 
-def remove_average_translation(segmentation: dict[torch.Tensor], batch_size: int, n_residues: int, device: torch.device) -> torch.Tensor:
+def remove_weighted_average_translation(all_translations:torch.Tensor, all_weights: torch.Tensor) -> torch.Tensor:
     """
-    Removes the average translation across segments from the translations predicted for the domains.
-    :param predicted_translations: dictionnary, for each part of the protein torch.tensor (Batch_size, N_segments, 3) translations for each domain
-    :param batch_size: size of the batch.
-    :param N_residues: number of residues.
-    :param device: torch.device
+    Removes the weighted average translation across segments from the translations predicted for the domains.
+    :param all_translations: (batch_size, N_total_segments, 3) translations for all the segments in the protein.
+    :param all_weights: (batch, N_total_segments) weights of each segment.
+    return: same as input tensor, with the average across segment removed.
     """
-    translation_per_residue = torch.zeros((batch_size, n_residues, 3), dtype=torch.float32, device=device)
-    for part, segm in segmentation.items():
-        translation_per_residue[:, segm["mask"] == 1] += torch.einsum("bij, bjk -> bik", segm["segmentation"], translation_vectors[part])
+    all_translations_centered = all_translations - torch.sum(all_weights[..., None]*all_translations, dim=1, keepdim=True)
+    return all_translations_centered
+
+def remove_weighted_average_rotation(all_quaternions: torch.Tensor, all_weights: torch.Tensor)-> torch.Tensor:
+    """
+    Computes the weighted average of the rotation and project it into a rotation.
+    Note, cryoSPHERE uses the quaternion convention WXYZ but roma XYZW
+    :param all_quaternions: (batch_size, N_total_segments, 4) all rotations.
+    :param all_weights: (batch_size, N_total_segments) the weights of all the segments.
+    return: (batch_size, N_total_segments, 4) rotations with removed averaged rotation, as quaternions
+    """
+    all_quaternions = roma.quat_normalize(all_quaternions[..., [1, 2, 3, 0]])
+    all_rotmat = roma.unitquat_to_rotmat(all_quaternions)
+    avg_rotmat = roma.special_procrustes((all_rotmat*all_weights[..., None, None]).sum(1))
+    all_rotmat_centered = avg_rotmat.transpose(-1, -2)[:, None]@all_rotmat
+    all_quat_centered = roma.rotmat_to_unitquat(all_rotmat_centered)[..., [3, 0, 1, 2]]
+    return all_quat_centered
 
 
 
@@ -658,10 +671,18 @@ def set_rigid_body_motions_in_dict(translations_per_segments_all_parts: torch.Te
     return translations_per_segments, quaternions_per_segments
 
 
+def compute_segment_weights(segmentation: dict[str, dict[str, torch.Tensor]])-> torch.Tensor:
+    """
+    Compute the weight of each segment: the average probability assignment to that segment, only on the residues that
+    are considered for the motion.
+    :param segmentation: dictionary {"part1":{"segmentation: torch.Tensor(batch_size, N_residues_part1, N_segments_part1),
+                                    "mask": torch.Tensor}, ....}
+    return: tensor of average assignment probability for that segment across all movable residues (batch_size, N_total_segments)
+    """
+    n_total_moved_residues = 0
+    all_weights = []
+    for part, part_config in segmentation.items():
+        n_total_moved_residues += part_config["segmentation"].shape[1]
+        all_weights.append(torch.sum(part_config["segmentation"], dim=1))
 
-
-
-
-
-
-
+    return torch.concat(all_weights, dim=-1)/n_total_moved_residues

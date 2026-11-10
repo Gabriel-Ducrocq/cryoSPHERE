@@ -15,7 +15,7 @@ from cryosphere.model import renderer
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
-from cryosphere.model.utils import low_pass_images, ddp_setup, compute_rotation_matrix_in_0, remove_global_translation, set_rigid_body_motions_in_dict
+from cryosphere.model.utils import low_pass_images, ddp_setup, compute_rotation_matrix_in_0, remove_global_translation, set_rigid_body_motions_in_dict, remove_weighted_average_translation, remove_weighted_average_rotation
 from torch.distributed import destroy_process_group
 from cryosphere.model.loss import compute_loss, calc_cor_loss
 
@@ -89,11 +89,20 @@ def start_training(vae, image_translator, ctf, grid, gmm_repr, optimizer, datase
                 latent_variables, latent_mean, latent_std = model_vae.sample_latent(None, indexes)
 
             segmentation = seg.sample_segments(batch_images.shape[0])
+            segments_weights = model.utils.compute_segment_weights(segmentation)
             quaternions_per_domain, translations_per_domain = model_vae.decode(latent_variables)
+            if experiment_settings["remove_global_translation"] == "subtract_mean":
+                print("ETNERING GLOBAL TRANS")
+                translations_per_domain = remove_weighted_average_translation(translations_per_domain, segments_weights)
+                quaternions_per_domain = remove_weighted_average_rotation(quaternions_per_domain, segments_weights)
+
             translations_per_domain, quaternions_per_domain = set_rigid_body_motions_in_dict(translations_per_domain, quaternions_per_domain, experiment_settings["segmentation_config"])
             translation_per_residue = model.utils.compute_translations_per_residue(translations_per_domain, segmentation, base_structure.coord.shape[0], batch_size, device)
             predicted_structures = model.utils.deform_structure(gmm_repr.mus, translation_per_residue, quaternions_per_domain, segmentation, device)
-            predicted_structures = remove_global_translation(predicted_structures, gmm_repr.mus)
+            if experiment_settings["remove_global_translation"] == "center_predicted":
+                print("ENTERING CENTER PRED")
+                predicted_structures = remove_global_translation(predicted_structures, gmm_repr.mus)
+
             for _ in range(experiment_settings["structure_iters"]):
                 posed_predicted_structures = renderer.rotate_structure(predicted_structures, batch_poses)
                 predicted_images  = renderer.project(posed_predicted_structures, gmm_repr.sigmas, gmm_repr.amplitudes, grid)
