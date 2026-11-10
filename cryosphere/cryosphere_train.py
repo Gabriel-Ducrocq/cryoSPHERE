@@ -15,7 +15,7 @@ from cryosphere.model import renderer
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
-from cryosphere.model.utils import low_pass_images, ddp_setup, compute_rotation_matrix_in_0, remove_global_translation
+from cryosphere.model.utils import low_pass_images, ddp_setup, compute_rotation_matrix_in_0, remove_global_translation, set_rigid_body_motions_in_dict
 from torch.distributed import destroy_process_group
 from cryosphere.model.loss import compute_loss, calc_cor_loss
 
@@ -90,6 +90,7 @@ def start_training(vae, image_translator, ctf, grid, gmm_repr, optimizer, datase
 
             segmentation = seg.sample_segments(batch_images.shape[0])
             quaternions_per_domain, translations_per_domain = model_vae.decode(latent_variables)
+            translations_per_domain, quaternions_per_domain = set_rigid_body_motions_in_dict(translations_per_domain, quaternions_per_domain, experiment_settings["segmentation_config"])
             translation_per_residue = model.utils.compute_translations_per_residue(translations_per_domain, segmentation, base_structure.coord.shape[0], batch_size, device)
             predicted_structures = model.utils.deform_structure(gmm_repr.mus, translation_per_residue, quaternions_per_domain, segmentation, device)
             predicted_structures = remove_global_translation(predicted_structures, gmm_repr.mus)

@@ -621,6 +621,44 @@ def remove_global_translation(predicted_structures: torch.Tensor, base_structure
     return centered_predicted
 
 
+def remove_average_translation(segmentation: dict[torch.Tensor], batch_size: int, n_residues: int, device: torch.device) -> torch.Tensor:
+    """
+    Removes the average translation across segments from the translations predicted for the domains.
+    :param predicted_translations: dictionnary, for each part of the protein torch.tensor (Batch_size, N_segments, 3) translations for each domain
+    :param batch_size: size of the batch.
+    :param N_residues: number of residues.
+    :param device: torch.device
+    """
+    translation_per_residue = torch.zeros((batch_size, n_residues, 3), dtype=torch.float32, device=device)
+    for part, segm in segmentation.items():
+        translation_per_residue[:, segm["mask"] == 1] += torch.einsum("bij, bjk -> bik", segm["segmentation"], translation_vectors[part])
+
+
+
+def set_rigid_body_motions_in_dict(translations_per_segments_all_parts: torch.Tensor,
+                                   quaternions_per_segments_all_parts: torch.Tensor,
+                                   segmentation_config:dict)-> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+    """
+    Splits the rotations and translations output by the neural network into a dictionary of the different parts of the
+    protein we want to move, e.g dict["part1] = torch.Tensor(batch_size, N_segments_part1, 3)
+    :param translations_per_segments_all_parts: (batch_size, N_total_segments,3) translation for each domain.
+    :param quaternions_per_segments_all_parts: (batch_size, N_total_segments, 4) rotation quaternion for each domain.
+    :param segmentation_config: dictionary containing the different parts of the protein dict["part1"] = {"N_segm":4, ....}
+    return: tuple of dictionaries of the transformations per segment, for quaternions and translations.
+    """
+    translations_per_segments = {}
+    quaternions_per_segments = {}
+    start = 0
+    for part, part_config in segmentation_config.items():
+        n_segments = part_config["N_segm"]
+        translations_per_segments[part] = translations_per_segments_all_parts[:, start:(start + n_segments), :]
+        quaternions_per_segments[part] = quaternions_per_segments_all_parts[:, start:(start + n_segments)]
+        start += n_segments
+
+    return translations_per_segments, quaternions_per_segments
+
+
+
 
 
 
