@@ -91,14 +91,14 @@ def start_training(vae, image_translator, ctf, grid, gmm_repr, optimizer, datase
             segmentation = seg.sample_segments(batch_images.shape[0])
             segments_weights = model.utils.compute_segment_weights(segmentation)
             quaternions_per_domain, translations_per_domain = model_vae.decode(latent_variables)
-            if experiment_settings["remove_global_translation"] == "subtract_mean":
+            if experiment_settings.get("remove_global_translation", None) == "subtract_mean":
                 translations_per_domain = remove_weighted_average_translation(translations_per_domain, segments_weights)
                 quaternions_per_domain = remove_weighted_average_rotation(quaternions_per_domain, segments_weights)
 
             translations_per_domain, quaternions_per_domain = set_rigid_body_motions_in_dict(translations_per_domain, quaternions_per_domain, experiment_settings["segmentation_config"])
             translation_per_residue = model.utils.compute_translations_per_residue(translations_per_domain, segmentation, base_structure.coord.shape[0], batch_size, device)
             predicted_structures = model.utils.deform_structure(gmm_repr.mus, translation_per_residue, quaternions_per_domain, segmentation, device)
-            if experiment_settings["remove_global_translation"] == "center_predicted":
+            if experiment_settings.get("remove_global_translation", None) == "center_predicted":
                 predicted_structures = remove_global_translation(predicted_structures, gmm_repr.mus)
 
             for _ in range(experiment_settings["structure_iters"]):
